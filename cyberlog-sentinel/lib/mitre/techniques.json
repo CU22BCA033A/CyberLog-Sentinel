@@ -1,0 +1,92 @@
+[
+  {
+    "id": "T1110",
+    "name": "Brute Force",
+    "tactic": "Credential Access",
+    "description": "Adversaries may use brute force techniques to gain access to accounts when passwords are unknown or when password hashes are obtained.",
+    "detection_guidance": "Monitor authentication logs for repeated failed login attempts. Alert on high volumes of authentication failures from single sources.",
+    "mitigation": "Enable account lockout policies, use multi-factor authentication, implement rate limiting on authentication endpoints.",
+    "external_url": "https://attack.mitre.org/techniques/T1110/"
+  },
+  {
+    "id": "T1110.001",
+    "name": "Brute Force: Password Guessing",
+    "tactic": "Credential Access",
+    "description": "Adversaries with no prior knowledge of legitimate credentials may try to guess passwords to gain access to accounts.",
+    "detection_guidance": "Monitor for failed authentication attempts. Correlate failures by source IP and target account.",
+    "mitigation": "Enforce strong password policies, implement account lockout, use fail2ban or similar tooling.",
+    "external_url": "https://attack.mitre.org/techniques/T1110/001/"
+  },
+  {
+    "id": "T1110.003",
+    "name": "Brute Force: Password Spraying",
+    "tactic": "Credential Access",
+    "description": "Adversaries use a single or small list of commonly used passwords against many accounts to avoid account lockouts.",
+    "detection_guidance": "Detect authentication attempts hitting many different accounts from a single source in a short time window.",
+    "mitigation": "Use MFA, monitor for cross-account authentication failures from same source.",
+    "external_url": "https://attack.mitre.org/techniques/T1110/003/"
+  },
+  {
+    "id": "T1078",
+    "name": "Valid Accounts",
+    "tactic": "Initial Access",
+    "description": "Adversaries may obtain and abuse credentials of existing accounts as a means of gaining Initial Access, Persistence, or Privilege Escalation.",
+    "detection_guidance": "Monitor for unusual authentication patterns such as logins from new locations, off-hours access, or authentication after previous failures.",
+    "mitigation": "Implement least privilege, use MFA, monitor for anomalous account usage.",
+    "external_url": "https://attack.mitre.org/techniques/T1078/"
+  },
+  {
+    "id": "T1078.003",
+    "name": "Valid Accounts: Local Accounts",
+    "tactic": "Privilege Escalation",
+    "description": "Adversaries may obtain and abuse credentials of a local account as a means of gaining access to a system.",
+    "detection_guidance": "Monitor local account authentication events, especially root logins via SSH.",
+    "mitigation": "Disable root SSH login (PermitRootLogin no), enforce use of sudo.",
+    "external_url": "https://attack.mitre.org/techniques/T1078/003/"
+  },
+  {
+    "id": "T1548.003",
+    "name": "Abuse Elevation Control Mechanism: Sudo and Sudo Caching",
+    "tactic": "Privilege Escalation",
+    "description": "Adversaries may use sudo to gain elevated privileges on a system. Sudo allows users to execute programs with the security privileges of another user.",
+    "detection_guidance": "Monitor sudoers file changes, alert on sudo shell escapes (bash, sh, su via sudo).",
+    "mitigation": "Configure sudoers with explicit command allowlists, avoid NOPASSWD, audit sudo usage.",
+    "external_url": "https://attack.mitre.org/techniques/T1548/003/"
+  },
+  {
+    "id": "T1136",
+    "name": "Create Account",
+    "tactic": "Persistence",
+    "description": "Adversaries may create an account to maintain access to victim systems.",
+    "detection_guidance": "Monitor for new account creation in auth logs, unusual first-time logins.",
+    "mitigation": "Monitor account creation events, review new accounts immediately.",
+    "external_url": "https://attack.mitre.org/techniques/T1136/"
+  },
+  {
+    "id": "T1531",
+    "name": "Account Access Removal",
+    "tactic": "Impact",
+    "description": "Adversaries may interrupt availability of system and network resources by inhibiting access to accounts utilized by legitimate users.",
+    "detection_guidance": "Monitor for account lockouts, deletion events.",
+    "mitigation": "Backup account data, monitor account modifications.",
+    "external_url": "https://attack.mitre.org/techniques/T1531/"
+  },
+  {
+    "id": "T1571",
+    "name": "Non-Standard Port",
+    "tactic": "Command and Control",
+    "description": "Adversaries may communicate using a protocol and port pairing that are typically not associated.",
+    "detection_guidance": "Analyze network traffic for unexpected port usage in authentication logs.",
+    "mitigation": "Network segmentation, firewall rules restricting unusual port combinations.",
+    "external_url": "https://attack.mitre.org/techniques/T1571/"
+  },
+  {
+    "id": "T1021",
+    "name": "Remote Services",
+    "tactic": "Lateral Movement",
+    "description": "Adversaries may use valid accounts to log into a service specifically designed to accept remote connections.",
+    "detection_guidance": "Monitor remote service access logs for unusual patterns.",
+    "mitigation": "Limit remote service access, require MFA for all remote connections.",
+    "external_url": "https://attack.mitre.org/techniques/T1021/"
+  }
+]

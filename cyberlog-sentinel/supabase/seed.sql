@@ -1,0 +1,12 @@
+-- Optional: seed data for local development.
+-- The realistic attack log itself lives at supabase/seed-logs/realistic-attack.log
+-- and is meant to be uploaded through the app's Upload page so the full
+-- parsing + detection pipeline (and resulting incidents/sessions) runs exactly
+-- as it would for a real user.
+--
+-- This file is intentionally minimal — there is no standalone table seed data
+-- required beyond the schema in 001_initial_schema.sql. If you want to seed
+-- a demo user profile manually (after creating a user via Supabase Auth),
+-- you can run:
+--
+-- update profiles set role = 'soc_lead' where id = '<your-user-uuid>';
