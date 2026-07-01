@@ -12,6 +12,15 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = createServerSupabaseClient();
 
+    // Get user from auth header sent by browser
+    let userId: string | null = null;
+    const authHeader = req.headers.get('authorization');
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '');
+      const { data } = await supabase.auth.getUser(token);
+      userId = data.user?.id ?? null;
+    }
+
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
 
@@ -34,17 +43,15 @@ export async function POST(req: NextRequest) {
       content = await file.text();
     }
 
-    // Limit lines to stay within timeout
     const allLines = content.split('\n').filter((l: string) => l.trim());
     const MAX_LINES = 3000;
     const truncated = allLines.length > MAX_LINES;
     const processedContent = allLines.slice(0, MAX_LINES).join('\n');
 
-    // Create job
     const { data: job, error: jobErr } = await supabase
       .from('upload_jobs')
       .insert({
-        user_id: null,
+        user_id: userId,
         filename: file.name,
         file_size_bytes: file.size,
         status: 'processing',
@@ -62,11 +69,9 @@ export async function POST(req: NextRequest) {
     }
 
     const jobId = job.id as string;
-
-    // Parse events
     const events: LogEvent[] = parseLogContent(processedContent);
 
-    // ---- INSERT EVENTS in one batch (max 500 rows per call) ----
+    // Insert events in chunks of 500
     const eventRows = events.map((e: LogEvent) => ({
       job_id: jobId,
       timestamp: e.timestamp.toISOString(),
@@ -90,18 +95,20 @@ export async function POST(req: NextRequest) {
       is_false_positive: false,
     }));
 
-    // Insert events in chunks of 500
     const CHUNK = 500;
     for (let i = 0; i < eventRows.length; i += CHUNK) {
       await supabase.from('log_events').insert(eventRows.slice(i, i + CHUNK));
     }
 
-    // ---- RUN DETECTIONS ----
+    await supabase.from('upload_jobs')
+      .update({ parsed_lines: events.length })
+      .eq('id', jobId);
+
+    // Run detections
     const ruleResults = runAllDetections(events);
     const now = new Date();
     let incidentCounter = 1;
 
-    // Collect ALL detections and incidents into arrays first
     const detectionRows: object[] = [];
     const incidentRows: object[] = [];
 
@@ -114,8 +121,12 @@ export async function POST(req: NextRequest) {
           detection.evidence_event_ids.includes(e.id)
         );
         const timestamps = evidenceEvents.map((e: LogEvent) => e.timestamp.getTime());
-        const firstSeen = timestamps.length ? new Date(Math.min(...timestamps)).toISOString() : null;
-        const lastSeen = timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
+        const firstSeen = timestamps.length
+          ? new Date(Math.min(...timestamps)).toISOString()
+          : null;
+        const lastSeen = timestamps.length
+          ? new Date(Math.max(...timestamps)).toISOString()
+          : null;
 
         detectionRows.push({
           job_id: jobId,
@@ -154,17 +165,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Insert ALL detections in one call
     if (detectionRows.length > 0) {
       await supabase.from('detections').insert(detectionRows);
     }
-
-    // Insert ALL incidents in one call
     if (incidentRows.length > 0) {
       await supabase.from('incidents').insert(incidentRows);
     }
 
-    // ---- SSH SESSIONS ----
+    // SSH Sessions
     const sessionOpened = events.filter((e: LogEvent) => e.event_type === 'pam_session_opened');
     const sessionClosed = events.filter((e: LogEvent) => e.event_type === 'pam_session_closed');
     const sessionRows: object[] = [];
@@ -190,19 +198,19 @@ export async function POST(req: NextRequest) {
         login_time: open.timestamp.toISOString(),
         logout_time: close?.timestamp.toISOString() ?? null,
         duration_seconds: close
-          ? Math.round((close.timestamp.getTime() - open.timestamp.getTime()) / 1000)
+          ? Math.round(
+              (close.timestamp.getTime() - open.timestamp.getTime()) / 1000
+            )
           : null,
         sudo_commands: sudoInSession,
         status: close ? 'closed' : 'active',
       });
     }
 
-    // Insert ALL sessions in one call
     if (sessionRows.length > 0) {
       await supabase.from('ssh_sessions').insert(sessionRows);
     }
 
-    // Mark complete
     await supabase.from('upload_jobs').update({
       status: 'complete',
       parsed_lines: events.length,
