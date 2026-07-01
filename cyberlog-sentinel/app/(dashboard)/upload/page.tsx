@@ -2,6 +2,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Upload, FileText, X, CheckCircle, Loader2, AlertCircle, AlertTriangle } from 'lucide-react';
+import { getSupabaseClient } from '@/lib/supabase/client';
 
 interface UploadFile {
   file: File;
@@ -16,7 +17,7 @@ interface UploadFile {
 }
 
 const ACCEPTED_TYPES = ['.log', '.txt', '.gz'];
-const MAX_SIZE = 100 * 1024 * 1024; // 100MB
+const MAX_SIZE = 100 * 1024 * 1024;
 
 export default function UploadPage() {
   const [files, setFiles] = useState<UploadFile[]>([]);
@@ -25,9 +26,11 @@ export default function UploadPage() {
   const router = useRouter();
 
   function validateFile(file: File): string | null {
-    if (file.size > MAX_SIZE) return `File too large (max 100MB). Size: ${(file.size / 1024 / 1024).toFixed(1)}MB`;
+    if (file.size > MAX_SIZE)
+      return `File too large (max 100MB). Size: ${(file.size / 1024 / 1024).toFixed(1)}MB`;
     const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-    if (!ACCEPTED_TYPES.includes(ext)) return `Invalid file type. Accepted: ${ACCEPTED_TYPES.join(', ')}`;
+    if (!ACCEPTED_TYPES.includes(ext))
+      return `Invalid file type. Accepted: ${ACCEPTED_TYPES.join(', ')}`;
     return null;
   }
 
@@ -52,15 +55,19 @@ export default function UploadPage() {
   }, []);
 
   async function uploadFile(upload: UploadFile) {
-    setFiles(prev => prev.map(f =>
-      f.id === upload.id ? { ...f, status: 'uploading', progress: 10 } : f
-    ));
+    setFiles(prev =>
+      prev.map(f => f.id === upload.id ? { ...f, status: 'uploading', progress: 10 } : f)
+    );
 
     const formData = new FormData();
     formData.append('file', upload.file);
 
     try {
-      // Use a 110 second timeout — just under Vercel's 120s max
+      // Send auth token so server knows which user is uploading
+      const supabase = getSupabaseClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? '';
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 110_000);
 
@@ -70,17 +77,22 @@ export default function UploadPage() {
           method: 'POST',
           body: formData,
           signal: controller.signal,
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
         });
         clearTimeout(timeout);
       } catch (fetchErr) {
         clearTimeout(timeout);
         if (fetchErr instanceof Error && fetchErr.name === 'AbortError') {
-          throw new Error('Upload timed out. Your file may be too large — try a smaller sample (first 10,000 lines).');
+          throw new Error(
+            'Upload timed out. Try uploading a smaller file (first 3000 lines).'
+          );
         }
         throw fetchErr;
       }
 
-      // Always parse as text first, then try JSON — avoids "Unexpected token" error
+      // Read as text first to avoid "Unexpected token" JSON parse errors
       const rawText = await res.text();
       let data: {
         jobId?: string;
@@ -94,94 +106,93 @@ export default function UploadPage() {
       try {
         data = JSON.parse(rawText);
       } catch {
-        // Server returned non-JSON (e.g. HTML error page or plain text crash)
         throw new Error(
           res.status === 504
-            ? 'Server timed out (504). Your file is too large for the free tier — try uploading a smaller slice (first 5000 lines).'
-            : res.status === 500
-            ? `Server error: ${rawText.slice(0, 200)}`
-            : `Unexpected response (${res.status}): ${rawText.slice(0, 200)}`
+            ? 'Server timed out (504). Try a smaller file.'
+            : `Server error (${res.status}): ${rawText.slice(0, 300)}`
         );
       }
 
       if (!res.ok || data.error) {
-        throw new Error(data.error ?? `Upload failed with status ${res.status}`);
+        throw new Error(data.error ?? `Upload failed (${res.status})`);
       }
 
       if (!data.jobId) {
-        throw new Error('Server did not return a job ID. Check Supabase environment variables.');
+        throw new Error(
+          'No job ID returned. Check that SUPABASE_SERVICE_ROLE_KEY is set in Vercel environment variables.'
+        );
       }
 
       const jobId = data.jobId;
 
-      setFiles(prev => prev.map(f =>
-        f.id === upload.id
-          ? {
-              ...f,
-              status: 'processing',
-              progress: 50,
-              jobId,
-              truncated: data.truncated,
-              processedLines: data.processedLines,
-              totalLines: data.totalLines,
-            }
-          : f
-      ));
+      setFiles(prev =>
+        prev.map(f =>
+          f.id === upload.id
+            ? {
+                ...f,
+                status: 'processing',
+                progress: 60,
+                jobId,
+                truncated: data.truncated,
+                processedLines: data.processedLines,
+                totalLines: data.totalLines,
+              }
+            : f
+        )
+      );
 
       // Poll for job completion
       let attempts = 0;
-      while (attempts < 120) {
-        await new Promise(r => setTimeout(r, 1000));
-
-        let statusData: {
-          status: string;
-          parsed_lines: number;
-          total_lines: number;
-          error_message?: string;
-        };
+      while (attempts < 60) {
+        await new Promise(r => setTimeout(r, 2000));
 
         try {
           const statusRes = await fetch(`/api/process/${jobId}`);
           const statusText = await statusRes.text();
-          statusData = JSON.parse(statusText);
-        } catch {
-          attempts++;
-          continue; // network glitch, keep polling
-        }
+          const statusData = JSON.parse(statusText) as {
+            status: string;
+            parsed_lines: number;
+            total_lines: number;
+            error_message?: string;
+          };
 
-        const progress = statusData.total_lines
-          ? Math.min(95, 50 + (statusData.parsed_lines / statusData.total_lines) * 45)
-          : 70;
+          const progress = statusData.total_lines
+            ? Math.min(95, 60 + (statusData.parsed_lines / statusData.total_lines) * 35)
+            : 80;
 
-        setFiles(prev => prev.map(f =>
-          f.id === upload.id ? { ...f, progress } : f
-        ));
+          setFiles(prev =>
+            prev.map(f => f.id === upload.id ? { ...f, progress } : f)
+          );
 
-        if (statusData.status === 'complete') {
-          setFiles(prev => prev.map(f =>
-            f.id === upload.id
-              ? { ...f, status: 'complete', progress: 100, jobId }
-              : f
-          ));
-          break;
-        }
+          if (statusData.status === 'complete') {
+            setFiles(prev =>
+              prev.map(f =>
+                f.id === upload.id
+                  ? { ...f, status: 'complete', progress: 100, jobId }
+                  : f
+              )
+            );
+            break;
+          }
 
-        if (statusData.status === 'failed') {
-          throw new Error(statusData.error_message ?? 'Processing failed on server');
+          if (statusData.status === 'failed') {
+            throw new Error(statusData.error_message ?? 'Processing failed on server');
+          }
+        } catch (pollErr) {
+          if (pollErr instanceof Error && pollErr.message.includes('Processing failed')) {
+            throw pollErr;
+          }
+          // Network glitch during polling — keep trying
         }
 
         attempts++;
       }
 
-      if (attempts >= 120) {
-        throw new Error('Timed out waiting for processing to complete. Check the dashboard — results may still have been saved.');
-      }
-
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      setFiles(prev => prev.map(f =>
-        f.id === upload.id ? { ...f, status: 'error', error: msg } : f
-      ));
+      setFiles(prev =>
+        prev.map(f => f.id === upload.id ? { ...f, status: 'error', error: msg } : f)
+      );
     }
   }
 
@@ -192,17 +203,21 @@ export default function UploadPage() {
 
   const hasComplete = files.some(f => f.status === 'complete');
   const hasPending = files.some(f => f.status === 'pending');
-  const isUploading = files.some(f => f.status === 'uploading' || f.status === 'processing');
+  const isUploading = files.some(
+    f => f.status === 'uploading' || f.status === 'processing'
+  );
 
   return (
     <div style={{ maxWidth: 700, margin: '0 auto' }}>
       <div style={{ marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#E8EDF5', margin: 0 }}>Upload Log Files</h1>
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#E8EDF5', margin: 0 }}>
+          Upload Log Files
+        </h1>
         <p style={{ color: '#8892A4', fontSize: '0.875rem', marginTop: '0.25rem' }}>
           Upload Linux authentication logs for threat analysis. Supports auth.log, secure, and syslog formats.
         </p>
         <p style={{ color: '#FFB800', fontSize: '0.8125rem', marginTop: '0.375rem' }}>
-          ⚠ Free tier limit: first 5,000 lines are processed. For full files, run locally with <span className="mono">npm run dev</span>.
+          ⚠ Free tier: first 3,000 lines are processed per upload.
         </p>
       </div>
 
@@ -217,7 +232,9 @@ export default function UploadPage() {
           padding: '3rem',
           textAlign: 'center',
           cursor: 'pointer',
-          border: isDragging ? '2px dashed #00FF88' : '2px dashed rgba(255,255,255,0.1)',
+          border: isDragging
+            ? '2px dashed #00FF88'
+            : '2px dashed rgba(255,255,255,0.1)',
           background: isDragging ? 'rgba(0,255,136,0.05)' : undefined,
           transition: 'all 0.2s ease',
           marginBottom: '1rem',
@@ -241,8 +258,8 @@ export default function UploadPage() {
           Supports{' '}
           <span className="mono" style={{ color: '#00FF88' }}>.log</span>,{' '}
           <span className="mono" style={{ color: '#00FF88' }}>.txt</span>,{' '}
-          <span className="mono" style={{ color: '#00FF88' }}>.gz</span>{' '}
-          — up to 100MB each
+          <span className="mono" style={{ color: '#00FF88' }}>.gz</span>
+          {' '}— up to 100MB each
         </p>
       </div>
 
@@ -250,7 +267,11 @@ export default function UploadPage() {
       {files.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
           {files.map(upload => (
-            <div key={upload.id} className="glass-card" style={{ padding: '1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+            <div
+              key={upload.id}
+              className="glass-card"
+              style={{ padding: '1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}
+            >
               <FileText
                 size={18}
                 color={
@@ -276,7 +297,9 @@ export default function UploadPage() {
                       <div style={{ height: '100%', width: `${upload.progress}%`, background: '#00FF88', borderRadius: 2, transition: 'width 0.5s ease' }} />
                     </div>
                     <div style={{ fontSize: '0.75rem', color: '#00D4FF' }}>
-                      {upload.status === 'uploading' ? 'Uploading and parsing...' : 'Running detection rules... this may take up to 60 seconds'}
+                      {upload.status === 'uploading'
+                        ? 'Uploading and parsing log lines...'
+                        : 'Running threat detection rules — please wait up to 60 seconds...'}
                     </div>
                   </>
                 )}
@@ -286,7 +309,6 @@ export default function UploadPage() {
                     <AlertTriangle size={13} color="#FFB800" style={{ flexShrink: 0, marginTop: 1 }} />
                     <span style={{ fontSize: '0.75rem', color: '#FFB800' }}>
                       Processed {upload.processedLines?.toLocaleString()} of {upload.totalLines?.toLocaleString()} lines (free tier limit).
-                      Results are representative — run locally for full analysis.
                     </span>
                   </div>
                 )}
@@ -312,7 +334,10 @@ export default function UploadPage() {
                 )}
                 {upload.status === 'pending' && (
                   <button
-                    onClick={e => { e.stopPropagation(); setFiles(prev => prev.filter(f => f.id !== upload.id)); }}
+                    onClick={e => {
+                      e.stopPropagation();
+                      setFiles(prev => prev.filter(f => f.id !== upload.id));
+                    }}
                     style={{ background: 'none', border: 'none', color: '#8892A4', cursor: 'pointer', display: 'flex' }}
                   >
                     <X size={16} />
