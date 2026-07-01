@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [magicLoading, setMagicLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [magicSent, setMagicSent] = useState(false);
+  const [registerSuccess, setRegisterSuccess] = useState(false);
   const [isRegister, setIsRegister] = useState(false);
   const [fullName, setFullName] = useState('');
   const router = useRouter();
@@ -20,22 +21,51 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setRegisterSuccess(false);
     const supabase = getSupabaseClient();
+
     if (isRegister) {
-      const { error: err } = await supabase.auth.signUp({
-        email, password,
-        options: { data: { full_name: fullName } },
-      });
-      if (err) { setError(err.message); setLoading(false); return; }
-      setError(null);
-      alert('Registration successful! Check your email to confirm your account, then log in.');
-      setIsRegister(false);
+      try {
+        const { data, error: err } = await supabase.auth.signUp({
+          email, password,
+          options: { data: { full_name: fullName } },
+        });
+
+        if (err) {
+          if (err.status === 429 || /rate limit/i.test(err.message)) {
+            setError('Too many attempts. Supabase is rate-limiting sign-ups right now. Please wait a few minutes and try again.');
+          } else {
+            setError(err.message);
+          }
+          setLoading(false);
+          return;
+        }
+
+        if (!data?.user) {
+          setError('Registration did not complete. Please wait a few minutes and try again — too many sign-up attempts were made recently.');
+          setLoading(false);
+          return;
+        }
+
+        if (data.user.identities && data.user.identities.length === 0) {
+          setError('An account with this email already exists. Try logging in, or use "Send Magic Link" instead.');
+          setLoading(false);
+          return;
+        }
+
+        setRegisterSuccess(true);
+        setIsRegister(false);
+      } catch (networkErr) {
+        setError('Network error reaching Supabase. Check your connection and try again.');
+      } finally {
+        setLoading(false);
+      }
     } else {
       const { error: err } = await supabase.auth.signInWithPassword({ email, password });
       if (err) { setError(err.message); setLoading(false); return; }
       router.push('/dashboard');
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function handleMagicLink() {
@@ -50,11 +80,9 @@ export default function LoginPage() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#0A0E17', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
-      {/* Background grid */}
       <div style={{ position: 'fixed', inset: 0, backgroundImage: 'linear-gradient(rgba(0,255,136,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.03) 1px, transparent 1px)', backgroundSize: '40px 40px', pointerEvents: 'none' }} />
 
       <div style={{ width: '100%', maxWidth: '420px', position: 'relative', zIndex: 1 }}>
-        {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '64px', height: '64px', background: 'rgba(0,255,136,0.1)', borderRadius: '16px', border: '1px solid rgba(0,255,136,0.3)', marginBottom: '1rem' }}>
             <Shield size={32} color="#00FF88" />
@@ -120,6 +148,11 @@ export default function LoginPage() {
                 Magic link sent! Check your email.
               </div>
             )}
+            {registerSuccess && (
+              <div style={{ padding: '0.75rem', background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.3)', borderRadius: '8px', color: '#00FF88', fontSize: '0.875rem' }}>
+                Registration successful! Check your email to confirm your account, then log in.
+              </div>
+            )}
 
             <button
               type="submit"
@@ -147,7 +180,7 @@ export default function LoginPage() {
 
           <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
             <button
-              onClick={() => { setIsRegister(!isRegister); setError(null); }}
+              onClick={() => { setIsRegister(!isRegister); setError(null); setRegisterSuccess(false); setMagicSent(false); }}
               style={{ background: 'none', border: 'none', color: '#8892A4', cursor: 'pointer', fontSize: '0.875rem' }}
             >
               {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Register"}
