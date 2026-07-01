@@ -29,7 +29,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'File too large (max 100MB)' }, { status: 400 });
     }
 
-    // Read file content
     let content: string;
     if (ext === '.gz') {
       const zlib = await import('zlib');
@@ -39,14 +38,12 @@ export async function POST(req: NextRequest) {
       content = await file.text();
     }
 
-    // LIMIT: only process first 5000 lines to stay within timeout
-    const allLines = content.split('\n').filter(l => l.trim());
+    const allLines = content.split('\n').filter((l: string) => l.trim());
     const MAX_LINES = 5000;
     const lines = allLines.slice(0, MAX_LINES);
     const truncated = allLines.length > MAX_LINES;
     const processedContent = lines.join('\n');
 
-    // Create job record
     const { data: job, error: jobErr } = await supabase
       .from('upload_jobs')
       .insert({
@@ -68,17 +65,12 @@ export async function POST(req: NextRequest) {
     }
 
     const jobId = job.id as string;
-
-    // Parse events
     const events: LogEvent[] = parseLogContent(processedContent);
 
-    // Batch insert events in chunks of 200
     const CHUNK = 200;
-    const insertedIds = new Map<string, string>(); // localId -> dbId
-
     for (let i = 0; i < events.length; i += CHUNK) {
       const chunk = events.slice(i, i + CHUNK);
-      const rows = chunk.map(e => ({
+      const rows = chunk.map((e: LogEvent) => ({
         job_id: jobId,
         timestamp: e.timestamp.toISOString(),
         hostname: e.hostname,
@@ -100,23 +92,12 @@ export async function POST(req: NextRequest) {
         is_internal_ip: e.source_ip ? isInternalIP(e.source_ip) : false,
         is_false_positive: false,
       }));
-
-      const { data: inserted } = await supabase
-        .from('log_events')
-        .insert(rows)
-        .select('id');
-
-      (inserted ?? []).forEach((row, idx) => {
-        insertedIds.set(chunk[idx].id, row.id);
-      });
-
-      await supabase
-        .from('upload_jobs')
+      await supabase.from('log_events').insert(rows);
+      await supabase.from('upload_jobs')
         .update({ parsed_lines: Math.min(i + CHUNK, events.length) })
         .eq('id', jobId);
     }
 
-    // Run detections
     const ruleResults = runAllDetections(events);
     const now = new Date();
     let incidentCounter = 1;
@@ -126,18 +107,13 @@ export async function POST(req: NextRequest) {
         const incidentRef = `INC-${now.getFullYear()}-${String(incidentCounter).padStart(4, '0')}`;
         incidentCounter++;
 
-        const evidenceEvents = events.filter(e =>
+        const evidenceEvents = events.filter((e: LogEvent) =>
           detection.evidence_event_ids.includes(e.id)
         );
-        const timestamps = evidenceEvents.map(e => e.timestamp.getTime());
-        const firstSeen = timestamps.length
-          ? new Date(Math.min(...timestamps)).toISOString()
-          : null;
-        const lastSeen = timestamps.length
-          ? new Date(Math.max(...timestamps)).toISOString()
-          : null;
+        const timestamps = evidenceEvents.map((e: LogEvent) => e.timestamp.getTime());
+        const firstSeen = timestamps.length ? new Date(Math.min(...timestamps)).toISOString() : null;
+        const lastSeen = timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
 
-        // Insert detection
         await supabase.from('detections').insert({
           job_id: jobId,
           rule_id: ruleResult.rule_id,
@@ -156,7 +132,6 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        // Insert incident
         await supabase.from('incidents').insert({
           job_id: jobId,
           incident_ref: incidentRef,
@@ -176,22 +151,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Reconstruct SSH sessions
-    const sessionOpened = events.filter(e => e.event_type === 'pam_session_opened');
-    const sessionClosed = events.filter(e => e.event_type === 'pam_session_closed');
+    const sessionOpened = events.filter((e: LogEvent) => e.event_type === 'pam_session_opened');
+    const sessionClosed = events.filter((e: LogEvent) => e.event_type === 'pam_session_closed');
 
     for (const open of sessionOpened) {
       const close = sessionClosed.find(
-        c => c.session_id === open.session_id && c.username === open.username
+        (c: LogEvent) => c.session_id === open.session_id && c.username === open.username
       );
       const sudoInSession = events
-        .filter(e =>
+        .filter((e: LogEvent) =>
           e.event_type === 'sudo_command' &&
           e.username === open.username &&
           e.timestamp.getTime() >= open.timestamp.getTime() &&
           (!close || e.timestamp.getTime() <= close.timestamp.getTime())
         )
-        .map(e => e.raw_line.slice(0, 200));
+        .map((e: LogEvent) => e.raw_line.slice(0, 200));
 
       await supabase.from('ssh_sessions').insert({
         job_id: jobId,
@@ -208,25 +182,21 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Mark complete
-    await supabase
-      .from('upload_jobs')
-      .update({
-        status: 'complete',
-        parsed_lines: events.length,
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', jobId);
+    await supabase.from('upload_jobs').update({
+      status: 'complete',
+      parsed_lines: events.length,
+      completed_at: new Date().toISOString(),
+    }).eq('id', jobId);
 
     return NextResponse.json({
       jobId,
       eventCount: events.length,
       incidentCount: incidentCounter - 1,
       truncated,
-      totalLines: allLines.length,
       processedLines: lines.length,
+      totalLines: allLines.length,
       message: truncated
-        ? `Processed first ${MAX_LINES} of ${allLines.length} lines (Vercel free tier limit). Upgrade to Pro or run locally for full file processing.`
+        ? `Processed first ${MAX_LINES} of ${allLines.length} lines.`
         : 'All lines processed successfully.',
     });
 
