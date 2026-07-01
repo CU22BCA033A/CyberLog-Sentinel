@@ -25,10 +25,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid file type: ${ext}` }, { status: 400 });
     }
 
-    if (file.size > 100 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File too large (max 100MB)' }, { status: 400 });
-    }
-
     let content: string;
     if (ext === '.gz') {
       const zlib = await import('zlib');
@@ -38,12 +34,13 @@ export async function POST(req: NextRequest) {
       content = await file.text();
     }
 
+    // Limit lines to stay within timeout
     const allLines = content.split('\n').filter((l: string) => l.trim());
-    const MAX_LINES = 5000;
-    const lines = allLines.slice(0, MAX_LINES);
+    const MAX_LINES = 3000;
     const truncated = allLines.length > MAX_LINES;
-    const processedContent = lines.join('\n');
+    const processedContent = allLines.slice(0, MAX_LINES).join('\n');
 
+    // Create job
     const { data: job, error: jobErr } = await supabase
       .from('upload_jobs')
       .insert({
@@ -65,42 +62,48 @@ export async function POST(req: NextRequest) {
     }
 
     const jobId = job.id as string;
+
+    // Parse events
     const events: LogEvent[] = parseLogContent(processedContent);
 
-    const CHUNK = 200;
-    for (let i = 0; i < events.length; i += CHUNK) {
-      const chunk = events.slice(i, i + CHUNK);
-      const rows = chunk.map((e: LogEvent) => ({
-        job_id: jobId,
-        timestamp: e.timestamp.toISOString(),
-        hostname: e.hostname,
-        service: e.service,
-        pid: e.pid,
-        event_type: e.event_type,
-        username: e.username,
-        source_ip: e.source_ip,
-        source_port: e.source_port,
-        auth_method: e.auth_method,
-        outcome: e.outcome,
-        raw_line: e.raw_line.slice(0, 1000),
-        severity: e.severity,
-        mitre_technique_id: e.mitre_technique_id,
-        mitre_technique_name: e.mitre_technique_name,
-        mitre_tactic: e.mitre_tactic,
-        threat_tags: e.threat_tags,
-        session_id: e.session_id,
-        is_internal_ip: e.source_ip ? isInternalIP(e.source_ip) : false,
-        is_false_positive: false,
-      }));
-      await supabase.from('log_events').insert(rows);
-      await supabase.from('upload_jobs')
-        .update({ parsed_lines: Math.min(i + CHUNK, events.length) })
-        .eq('id', jobId);
+    // ---- INSERT EVENTS in one batch (max 500 rows per call) ----
+    const eventRows = events.map((e: LogEvent) => ({
+      job_id: jobId,
+      timestamp: e.timestamp.toISOString(),
+      hostname: e.hostname,
+      service: e.service,
+      pid: e.pid,
+      event_type: e.event_type,
+      username: e.username,
+      source_ip: e.source_ip,
+      source_port: e.source_port,
+      auth_method: e.auth_method,
+      outcome: e.outcome,
+      raw_line: e.raw_line.slice(0, 500),
+      severity: e.severity,
+      mitre_technique_id: e.mitre_technique_id,
+      mitre_technique_name: e.mitre_technique_name,
+      mitre_tactic: e.mitre_tactic,
+      threat_tags: e.threat_tags,
+      session_id: e.session_id,
+      is_internal_ip: e.source_ip ? isInternalIP(e.source_ip) : false,
+      is_false_positive: false,
+    }));
+
+    // Insert events in chunks of 500
+    const CHUNK = 500;
+    for (let i = 0; i < eventRows.length; i += CHUNK) {
+      await supabase.from('log_events').insert(eventRows.slice(i, i + CHUNK));
     }
 
+    // ---- RUN DETECTIONS ----
     const ruleResults = runAllDetections(events);
     const now = new Date();
     let incidentCounter = 1;
+
+    // Collect ALL detections and incidents into arrays first
+    const detectionRows: object[] = [];
+    const incidentRows: object[] = [];
 
     for (const ruleResult of ruleResults) {
       for (const detection of ruleResult.detections) {
@@ -114,7 +117,7 @@ export async function POST(req: NextRequest) {
         const firstSeen = timestamps.length ? new Date(Math.min(...timestamps)).toISOString() : null;
         const lastSeen = timestamps.length ? new Date(Math.max(...timestamps)).toISOString() : null;
 
-        await supabase.from('detections').insert({
+        detectionRows.push({
           job_id: jobId,
           rule_id: ruleResult.rule_id,
           rule_name: ruleResult.rule_name,
@@ -124,15 +127,15 @@ export async function POST(req: NextRequest) {
           username: detection.targeted_users[0] ?? null,
           mitre_technique_id: detection.mitre_technique_id,
           details: {
-            ...detection.details,
             title: detection.title,
             description: detection.description,
             source_ips: detection.source_ips,
             targeted_users: detection.targeted_users,
+            ...detection.details,
           },
         });
 
-        await supabase.from('incidents').insert({
+        incidentRows.push({
           job_id: jobId,
           incident_ref: incidentRef,
           title: detection.title,
@@ -151,8 +154,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Insert ALL detections in one call
+    if (detectionRows.length > 0) {
+      await supabase.from('detections').insert(detectionRows);
+    }
+
+    // Insert ALL incidents in one call
+    if (incidentRows.length > 0) {
+      await supabase.from('incidents').insert(incidentRows);
+    }
+
+    // ---- SSH SESSIONS ----
     const sessionOpened = events.filter((e: LogEvent) => e.event_type === 'pam_session_opened');
     const sessionClosed = events.filter((e: LogEvent) => e.event_type === 'pam_session_closed');
+    const sessionRows: object[] = [];
 
     for (const open of sessionOpened) {
       const close = sessionClosed.find(
@@ -167,7 +182,7 @@ export async function POST(req: NextRequest) {
         )
         .map((e: LogEvent) => e.raw_line.slice(0, 200));
 
-      await supabase.from('ssh_sessions').insert({
+      sessionRows.push({
         job_id: jobId,
         session_key: open.session_id,
         username: open.username,
@@ -182,6 +197,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Insert ALL sessions in one call
+    if (sessionRows.length > 0) {
+      await supabase.from('ssh_sessions').insert(sessionRows);
+    }
+
+    // Mark complete
     await supabase.from('upload_jobs').update({
       status: 'complete',
       parsed_lines: events.length,
@@ -193,7 +214,7 @@ export async function POST(req: NextRequest) {
       eventCount: events.length,
       incidentCount: incidentCounter - 1,
       truncated,
-      processedLines: lines.length,
+      processedLines: Math.min(allLines.length, MAX_LINES),
       totalLines: allLines.length,
       message: truncated
         ? `Processed first ${MAX_LINES} of ${allLines.length} lines.`
