@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   Shield, LayoutDashboard, Table2, AlertTriangle,
   Terminal, Search, FileText, Settings, Upload,
-  ChevronLeft, ChevronRight, LogOut, Bell, Menu, X
+  ChevronLeft, ChevronRight, LogOut, Bell
 } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabase/client';
 
@@ -21,17 +21,35 @@ const NAV_ITEMS = [
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [user, setUser] = useState<{ email?: string } | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
     const supabase = getSupabaseClient();
-    supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) router.push('/login');
-      else setUser(data.user);
+
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUserEmail(session.user.email ?? null);
+      } else {
+        // No session — redirect to login
+        router.push('/login');
+      }
+      setAuthChecked(true);
     });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        router.push('/login');
+      } else if (session?.user) {
+        setUserEmail(session.user.email ?? null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [router]);
 
   async function handleLogout() {
@@ -40,16 +58,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push('/login');
   }
 
+  // Don't render anything until auth is confirmed
+  // This prevents the flash of redirect
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0A0E17', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ width: 40, height: 40, border: '3px solid rgba(0,255,136,0.2)', borderTop: '3px solid #00FF88', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <p style={{ color: '#8892A4', fontSize: '0.875rem' }}>Verifying session...</p>
+        </div>
+      </div>
+    );
+  }
+
   const sidebarW = collapsed ? 64 : 240;
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#0A0E17' }}>
       {/* Sidebar */}
       <aside style={{
-        width: sidebarW, flexShrink: 0, background: '#0F1520',
-        borderRight: '1px solid rgba(255,255,255,0.06)', display: 'flex',
-        flexDirection: 'column', position: 'fixed', top: 0, left: 0,
-        height: '100vh', zIndex: 40, transition: 'width 0.2s ease',
+        width: sidebarW,
+        flexShrink: 0,
+        background: '#0F1520',
+        borderRight: '1px solid rgba(255,255,255,0.06)',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        height: '100vh',
+        zIndex: 40,
+        transition: 'width 0.2s ease',
         overflowX: 'hidden',
       }}>
         {/* Logo */}
@@ -77,12 +116,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             const active = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
             return (
               <Link key={item.href} href={item.href} style={{
-                display: 'flex', alignItems: 'center', gap: '0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
                 padding: collapsed ? '0.75rem' : '0.625rem 0.75rem',
-                borderRadius: '8px', marginBottom: '2px', textDecoration: 'none',
-                color: active ? '#00FF88' : '#8892A4', fontWeight: active ? 600 : 400,
+                borderRadius: '8px',
+                marginBottom: '2px',
+                textDecoration: 'none',
+                color: active ? '#00FF88' : '#8892A4',
+                fontWeight: active ? 600 : 400,
                 background: active ? 'rgba(0,255,136,0.08)' : 'transparent',
-                fontSize: '0.875rem', justifyContent: collapsed ? 'center' : 'flex-start',
+                fontSize: '0.875rem',
+                justifyContent: collapsed ? 'center' : 'flex-start',
                 transition: 'all 0.15s ease',
               }}>
                 <Icon size={16} style={{ flexShrink: 0 }} />
@@ -94,20 +139,42 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Bottom */}
         <div style={{ padding: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          {!collapsed && userEmail && (
+            <div style={{ padding: '0.625rem 0.75rem', marginBottom: '0.5rem', fontSize: '0.75rem', color: '#4A5568', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {userEmail}
+            </div>
+          )}
           <button onClick={handleLogout} style={{
-            display: 'flex', alignItems: 'center', gap: '0.75rem',
-            padding: collapsed ? '0.75rem' : '0.625rem 0.75rem', borderRadius: '8px',
-            background: 'none', border: 'none', color: '#8892A4', cursor: 'pointer',
-            fontSize: '0.875rem', width: '100%', justifyContent: collapsed ? 'center' : 'flex-start',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            padding: collapsed ? '0.75rem' : '0.625rem 0.75rem',
+            borderRadius: '8px',
+            background: 'none',
+            border: 'none',
+            color: '#8892A4',
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            width: '100%',
+            justifyContent: collapsed ? 'center' : 'flex-start',
           }}>
             <LogOut size={16} />
             {!collapsed && 'Sign Out'}
           </button>
           <button onClick={() => setCollapsed(!collapsed)} style={{
-            display: 'flex', alignItems: 'center', gap: '0.75rem',
-            padding: collapsed ? '0.75rem' : '0.625rem 0.75rem', borderRadius: '8px',
-            background: 'none', border: 'none', color: '#4A5568', cursor: 'pointer',
-            fontSize: '0.875rem', width: '100%', marginTop: '4px', justifyContent: collapsed ? 'center' : 'flex-start',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem',
+            padding: collapsed ? '0.75rem' : '0.625rem 0.75rem',
+            borderRadius: '8px',
+            background: 'none',
+            border: 'none',
+            color: '#4A5568',
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            width: '100%',
+            marginTop: '4px',
+            justifyContent: collapsed ? 'center' : 'flex-start',
           }}>
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
             {!collapsed && 'Collapse'}
@@ -115,13 +182,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      {/* Main */}
+      {/* Main content */}
       <div style={{ flex: 1, marginLeft: sidebarW, display: 'flex', flexDirection: 'column', minHeight: '100vh', transition: 'margin-left 0.2s ease' }}>
         {/* Topbar */}
         <header style={{
-          height: 64, background: '#0F1520', borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', padding: '0 1.5rem', gap: '1rem',
-          position: 'sticky', top: 0, zIndex: 30,
+          height: 64,
+          background: '#0F1520',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 1.5rem',
+          gap: '1rem',
+          position: 'sticky',
+          top: 0,
+          zIndex: 30,
         }}>
           <div style={{ flex: 1 }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#8892A4', fontSize: '0.75rem' }}>
@@ -133,13 +207,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'rgba(0,255,136,0.15)', border: '1px solid rgba(0,255,136,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700, color: '#00FF88' }}>
-              {user?.email?.[0]?.toUpperCase() ?? 'A'}
+              {userEmail?.[0]?.toUpperCase() ?? 'A'}
             </div>
-            {user?.email && <span style={{ fontSize: '0.8125rem', color: '#8892A4', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</span>}
+            {userEmail && (
+              <span style={{ fontSize: '0.8125rem', color: '#8892A4', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {userEmail}
+              </span>
+            )}
           </div>
         </header>
 
-        {/* Content */}
+        {/* Page content */}
         <main style={{ flex: 1, padding: '1.5rem', overflowY: 'auto' }}>
           {children}
         </main>
