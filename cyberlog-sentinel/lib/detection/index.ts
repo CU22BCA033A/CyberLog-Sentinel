@@ -11,6 +11,7 @@ import {
   detectRepeatedPAMFailures,
   detectNonStandardPort,
 } from './rules/off-hours';
+import { detectWebAttacks, detectPortScan } from './rules/web-attacks';
 
 export interface RuleResult {
   rule_id: string;
@@ -26,10 +27,12 @@ const RULES: Array<{ id: string; name: string; fn: (events: LogEvent[]) => Detec
   { id: 'success_after_bruteforce', name: 'Successful Login After Brute Force', fn: detectSuccessAfterBruteForce },
   { id: 'sudo_shell_escape', name: 'Sudo Shell Escape', fn: detectSudoEscalation },
   { id: 'off_hours_auth', name: 'Off-Hours Authentication', fn: detectOffHoursAuth },
-  { id: 'global_failure_flood', name: 'Coordinated Attack (Global Failure Flood)', fn: detectGlobalFailureFlood },
+  { id: 'global_failure_flood', name: 'Coordinated Attack', fn: detectGlobalFailureFlood },
   { id: 'invalid_user_enum', name: 'Invalid User Enumeration', fn: detectInvalidUserAttempts },
   { id: 'repeated_pam_failures', name: 'Repeated PAM Failures', fn: detectRepeatedPAMFailures },
   { id: 'non_standard_port', name: 'Non-Standard Source Port', fn: detectNonStandardPort },
+  { id: 'web_attacks', name: 'Web Application Attacks', fn: detectWebAttacks },
+  { id: 'port_scan', name: 'Port Scan Detection', fn: detectPortScan },
 ];
 
 export function runAllDetections(events: LogEvent[]): RuleResult[] {
