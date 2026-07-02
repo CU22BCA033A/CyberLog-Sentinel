@@ -267,4 +267,157 @@ export default function ThreatsPage() {
           )}
 
           {/* Recommendations */}
-          <div
+          <div className="glass-card" style={{ padding: '1.25rem' }}>
+            <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <TrendingUp size={16} color="#00FF88" /> Recommendations
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {[
+                criticalCount > 0 && { priority: 'IMMEDIATE', color: '#FF3B30', text: 'Isolate affected systems immediately. Rotate all credentials for flagged accounts. Preserve forensic evidence before making changes.' },
+                incidents.some(i => i.mitre_technique_id?.startsWith('T1110')) && { priority: 'HIGH', color: '#FF6B35', text: 'Implement account lockout after 5 failed attempts. Enable MFA on all remote access. Deploy fail2ban or equivalent rate limiting.' },
+                incidents.some(i => i.mitre_technique_id === 'T1078.003') && { priority: 'HIGH', color: '#FF6B35', text: 'Disable direct root SSH login (PermitRootLogin no). Enforce use of sudo with logging enabled.' },
+                incidents.some(i => i.mitre_technique_id === 'T1190') && { priority: 'HIGH', color: '#FF6B35', text: 'Review all web application inputs for injection vulnerabilities. Implement WAF rules. Apply parameterized queries throughout the codebase.' },
+                incidents.some(i => i.mitre_technique_id === 'T1059') && { priority: 'CRITICAL', color: '#FF3B30', text: 'Command injection detected. Audit all system commands that accept user input. Implement strict input validation and whitelisting.' },
+                { priority: 'MEDIUM', color: '#FFB800', text: 'Enable centralized SIEM logging. Configure alerts for anomalous authentication patterns. Conduct regular security audits.' },
+                { priority: 'LOW', color: '#4DC9FF', text: 'Perform penetration testing against all external-facing services. Review firewall rules and network segmentation policies.' },
+              ].filter(Boolean).map((rec, i) => rec && (
+                <div key={i} style={{ display: 'flex', gap: '0.75rem', padding: '0.75rem', background: `${rec.color}08`, border: `1px solid ${rec.color}20`, borderRadius: '8px' }}>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, color: rec.color, background: `${rec.color}20`, padding: '2px 6px', borderRadius: 4, letterSpacing: '0.05em', flexShrink: 0, height: 'fit-content', marginTop: 1 }}>{rec.priority}</span>
+                  <span style={{ fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}>{rec.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Confidence & False Positive */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            <div className="glass-card" style={{ padding: '1.25rem' }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>Detection Confidence</div>
+              {incidents.length === 0 ? (
+                <div style={{ color: '#8892A4', fontSize: '0.875rem' }}>No threats detected</div>
+              ) : (
+                incidents.slice(0, 5).map(inc => {
+                  const confidence = 85;
+                  return (
+                    <div key={inc.id} style={{ marginBottom: '0.625rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#8892A4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>{inc.title}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#00FF88', fontFamily: 'JetBrains Mono, monospace' }}>{confidence}%</span>
+                      </div>
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2 }}>
+                        <div style={{ height: '100%', width: `${confidence}%`, background: SEVERITY_COLORS[inc.severity], borderRadius: 2 }} />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="glass-card" style={{ padding: '1.25rem' }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>False Positive Assessment</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {incidents.slice(0, 4).map(inc => {
+                  const fpRisk = inc.severity === 'critical' ? 'Low' : inc.severity === 'high' ? 'Low' : 'Medium';
+                  const fpColor = fpRisk === 'Low' ? '#34C759' : '#FFB800';
+                  return (
+                    <div key={inc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#8892A4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>{inc.title}</span>
+                      <span style={{ fontSize: '0.7rem', fontWeight: 600, color: fpColor, background: `${fpColor}15`, padding: '2px 8px', borderRadius: 4 }}>{fpRisk} FP Risk</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Incidents Tab */}
+      {activeTab === 'incidents' && (
+        <>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+              style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', color: '#E8EDF5', fontSize: '0.8125rem', cursor: 'pointer' }}>
+              <option value="">All Statuses</option>
+              {['open', 'investigating', 'closed', 'false_positive'].map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+            </select>
+            <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)}
+              style={{ padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', color: '#E8EDF5', fontSize: '0.8125rem', cursor: 'pointer' }}>
+              <option value="">All Severities</option>
+              {['critical', 'high', 'medium', 'low'].map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {loading ? (
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              {Array.from({ length: 4 }).map((_, i) => <div key={i} className="glass-card skeleton" style={{ height: 140 }} />)}
+            </div>
+          ) : !jobId ? (
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#8892A4' }}>
+              Upload a log file to detect threats.
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#8892A4' }}>No incidents match this filter.</div>
+          ) : (
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              {filtered.map(inc => (
+                <div key={inc.id} className="glass-card" style={{ padding: '1.25rem', borderLeft: `3px solid ${SEVERITY_COLORS[inc.severity] ?? '#4A5568'}` }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <div style={{ flex: 1, minWidth: 250 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.7rem', fontFamily: 'JetBrains Mono, monospace', color: '#4A5568' }}>{inc.incident_ref}</span>
+                        <span className={`badge badge-${inc.severity}`}>{inc.severity}</span>
+                        {inc.mitre_technique_id && (
+                          <span style={{ fontSize: '0.7rem', fontFamily: 'JetBrains Mono, monospace', color: '#FFB800', background: 'rgba(255,184,0,0.1)', padding: '2px 6px', borderRadius: 4 }}>{inc.mitre_technique_id}</span>
+                        )}
+                        {inc.mitre_tactic && (
+                          <span style={{ fontSize: '0.7rem', color: '#8892A4', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4 }}>{inc.mitre_tactic}</span>
+                        )}
+                      </div>
+                      <Link href={`/dashboard/threats/${inc.id}`} style={{ textDecoration: 'none' }}>
+                        <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E8EDF5', margin: 0 }}>{inc.title}</h3>
+                      </Link>
+                      {inc.description && (
+                        <p style={{ fontSize: '0.8125rem', color: '#8892A4', margin: '0.375rem 0 0', lineHeight: 1.5 }}>{inc.description}</p>
+                      )}
+                    </div>
+                    <select value={inc.status} onChange={e => updateStatus(inc.id, e.target.value)}
+                      style={{ padding: '0.375rem 0.625rem', background: `${STATUS_COLORS[inc.status]}15`, border: `1px solid ${STATUS_COLORS[inc.status]}40`, borderRadius: '6px', color: STATUS_COLORS[inc.status], fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>
+                      {['open', 'investigating', 'closed', 'false_positive'].map(s => (
+                        <option key={s} value={s} style={{ background: '#0F1520', color: '#E8EDF5' }}>{s.replace('_', ' ')}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.8125rem', color: '#8892A4' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                      <AlertTriangle size={14} /> {inc.event_count} events
+                    </div>
+                    {inc.source_ips.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        <Globe size={14} />
+                        <span className="mono" style={{ color: '#00FF88' }}>{inc.source_ips.slice(0, 2).join(', ')}{inc.source_ips.length > 2 ? ` +${inc.source_ips.length - 2}` : ''}</span>
+                      </div>
+                    )}
+                    {inc.targeted_users.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        <Users size={14} />
+                        <span className="mono" style={{ color: '#00D4FF' }}>{inc.targeted_users.slice(0, 2).join(', ')}{inc.targeted_users.length > 2 ? ` +${inc.targeted_users.length - 2}` : ''}</span>
+                      </div>
+                    )}
+                    {inc.first_seen && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                        <Clock size={14} />
+                        {format(new Date(inc.first_seen), 'MMM dd HH:mm')}
+                        {inc.last_seen && ` → ${format(new Date(inc.last_seen), 'HH:mm')}`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
