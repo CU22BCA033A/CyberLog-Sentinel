@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { getSupabaseClient } from '@/lib/supabase/client';
+import { getLatestJobId } from '@/lib/utils/get-job';
 import { FileText, Download, Loader2 } from 'lucide-react';
 
 interface JobSummary { id: string; filename: string; created_at: string }
@@ -9,16 +10,19 @@ export default function ReportsPage() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [selectedJob, setSelectedJob] = useState<string>('');
   const [generating, setGenerating] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadJobs(); }, []);
 
   async function loadJobs() {
     const supabase = getSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data } = await supabase.from('upload_jobs').select('id,filename,created_at').eq('user_id', user.id).eq('status', 'complete').order('created_at', { ascending: false });
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
+    if (!userId) { setLoading(false); return; }
+    const { data } = await supabase.from('upload_jobs').select('id,filename,created_at').eq('user_id', userId).eq('status', 'complete').order('created_at', { ascending: false });
     setJobs((data ?? []) as JobSummary[]);
     if (data && data.length > 0) setSelectedJob(data[0].id);
+    setLoading(false);
   }
 
   async function generateReport(format: 'pdf' | 'csv' | 'json' | 'stix') {
@@ -28,24 +32,25 @@ export default function ReportsPage() {
       const res = await fetch(`/api/reports/generate?jobId=${selectedJob}&format=${format}`);
       if (!res.ok) throw new Error('Report generation failed');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `cyberlog-report-${selectedJob.slice(0, 8)}.${format === 'pdf' ? 'pdf' : format === 'stix' ? 'json' : format}`;
+      a.href = URL.createObjectURL(blob);
+      a.download = `cyberlog-report.${format === 'stix' ? 'json' : format}`;
       a.click();
     } catch (err) {
-      alert('Failed to generate report: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      alert('Failed: ' + (err instanceof Error ? err.message : 'Unknown'));
     } finally {
       setGenerating(null);
     }
   }
 
   const FORMATS = [
-    { id: 'pdf', label: 'Full PDF Report', desc: 'Executive summary, threat tables, charts, MITRE coverage, recommendations' },
+    { id: 'pdf', label: 'Full PDF Report', desc: 'Executive summary, threat tables, MITRE coverage, recommendations' },
     { id: 'csv', label: 'CSV Export', desc: 'Raw event data for spreadsheet analysis' },
     { id: 'json', label: 'JSON Export', desc: 'All incidents and detections in structured JSON' },
     { id: 'stix', label: 'STIX 2.1 Bundle', desc: 'Threat intelligence sharing format' },
   ] as const;
+
+  if (loading) return <div className="glass-card skeleton" style={{ height: 300 }} />;
 
   return (
     <div style={{ maxWidth: 700, margin: '0 auto' }}>
@@ -53,11 +58,8 @@ export default function ReportsPage() {
         <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#E8EDF5', margin: 0 }}>Reports</h1>
         <p style={{ color: '#8892A4', fontSize: '0.875rem', marginTop: '0.25rem' }}>Generate security reports for analysis sessions</p>
       </div>
-
       {jobs.length === 0 ? (
-        <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#8892A4' }}>
-          No completed analyses available. Upload a log file first.
-        </div>
+        <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#8892A4' }}>No completed analyses yet. Upload a log file first.</div>
       ) : (
         <>
           <div className="glass-card" style={{ padding: '1.25rem', marginBottom: '1rem' }}>
@@ -67,7 +69,6 @@ export default function ReportsPage() {
               {jobs.map(j => <option key={j.id} value={j.id}>{j.filename} — {new Date(j.created_at).toLocaleDateString()}</option>)}
             </select>
           </div>
-
           <div style={{ display: 'grid', gap: '1rem' }}>
             {FORMATS.map(f => (
               <div key={f.id} className="glass-card" style={{ padding: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
