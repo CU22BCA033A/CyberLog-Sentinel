@@ -2,292 +2,269 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { getSupabaseClient } from '@/lib/supabase/client';
-import { Activity, AlertTriangle, Flame, Globe, Shield, Users, Upload } from 'lucide-react';
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, Legend,
-} from 'recharts';
+import { AlertTriangle, Globe, Users, Clock, Shield, TrendingUp, FileText } from 'lucide-react';
+import { format } from 'date-fns';
 
-interface DashboardStats {
-  totalEvents: number;
-  threatsDetected: number;
-  criticalAlerts: number;
-  uniqueIPs: number;
-  bruteForceIncidents: number;
-  compromisedAccounts: number;
-  recentJobs: Array<{ id: string; filename: string; status: string; created_at: string }>;
+interface Incident {
+  id: string;
+  incident_ref: string;
+  title: string;
+  description: string | null;
+  severity: string;
+  status: string;
+  mitre_technique_id: string | null;
+  mitre_tactic: string | null;
+  source_ips: string[];
+  targeted_users: string[];
+  event_count: number;
+  first_seen: string | null;
+  last_seen: string | null;
 }
+
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0, high: 1, medium: 2, low: 3, info: 4,
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  open: '#FF3B30', investigating: '#FFB800', closed: '#34C759', false_positive: '#4A5568',
+};
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#FF3B30', high: '#FF6B35', medium: '#FFB800', low: '#4DC9FF', info: '#4A5568',
 };
 
-function MetricCard({ label, value, icon: Icon, color }: {
-  label: string; value: number | string; icon: React.ElementType; color: string;
-}) {
+function RiskGauge({ score }: { score: number }) {
+  const color = score >= 80 ? '#FF3B30' : score >= 60 ? '#FF6B35' : score >= 40 ? '#FFB800' : score >= 20 ? '#4DC9FF' : '#34C759';
+  const circumference = 2 * Math.PI * 40;
+  const offset = circumference - (score / 100) * circumference;
   return (
-    <div className="glass-card" style={{ padding: '1.25rem', borderLeft: `3px solid ${color}` }}>
-      <div style={{ width: 36, height: 36, borderRadius: '8px', background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '0.75rem' }}>
-        <Icon size={18} color={color} />
+    <div style={{ position: 'relative', width: 100, height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <svg width="100" height="100" style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="8" />
+        <circle cx="50" cy="50" r="40" fill="none" stroke={color} strokeWidth="8"
+          strokeDasharray={circumference} strokeDashoffset={offset}
+          style={{ transition: 'stroke-dashoffset 1s ease', strokeLinecap: 'round' }} />
+      </svg>
+      <div style={{ position: 'absolute', textAlign: 'center' }}>
+        <div style={{ fontSize: '1.25rem', fontWeight: 800, color, fontFamily: 'JetBrains Mono, monospace' }}>{score}</div>
+        <div style={{ fontSize: '0.6rem', color: '#4A5568', textTransform: 'uppercase' }}>Risk</div>
       </div>
-      <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#E8EDF5', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>
-        {typeof value === 'number' ? value.toLocaleString() : value}
-      </div>
-      <div style={{ fontSize: '0.8125rem', color: '#8892A4', marginTop: '0.375rem' }}>{label}</div>
     </div>
   );
 }
 
-function SkeletonCard() {
-  return (
-    <div className="glass-card" style={{ padding: '1.25rem' }}>
-      <div className="skeleton" style={{ height: 36, width: 36, borderRadius: 8, marginBottom: '0.75rem' }} />
-      <div className="skeleton" style={{ height: 28, width: '60%', marginBottom: '0.375rem' }} />
-      <div className="skeleton" style={{ height: 16, width: '80%' }} />
-    </div>
-  );
-}
-
-export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+export default function ThreatsPage() {
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
-  const [severityData, setSeverityData] = useState<Array<{ name: string; value: number; color: string }>>([]);
-  const [timelineData, setTimelineData] = useState<Array<{ hour: string; success: number; failure: number }>>([]);
-  const [topIPs, setTopIPs] = useState<Array<{ ip: string; failures: number; successes: number }>>([]);
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [severityFilter, setSeverityFilter] = useState('');
+  const [activeTab, setActiveTab] = useState<'incidents' | 'report'>('incidents');
+  const [jobId, setJobId] = useState<string | null>(null);
 
-  useEffect(() => { loadDashboard(); }, []);
+  useEffect(() => { load(); }, []);
 
-  async function loadDashboard() {
+  async function load() {
     setLoading(true);
     const supabase = getSupabaseClient();
-
-    // Get most recent completed job — try by user first, then any
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
 
     let jobs = null;
-
     if (userId) {
-      const { data } = await supabase
-        .from('upload_jobs')
-        .select('id, filename, status, created_at')
-        .eq('user_id', userId)
-        .eq('status', 'complete')
-        .order('created_at', { ascending: false })
-        .limit(5);
+      const { data } = await supabase.from('upload_jobs').select('id').eq('user_id', userId).eq('status', 'complete').order('created_at', { ascending: false }).limit(1);
       jobs = data;
     }
-
-    // Fallback: show any completed job (handles uploads before login was working)
     if (!jobs || jobs.length === 0) {
-      const { data } = await supabase
-        .from('upload_jobs')
-        .select('id, filename, status, created_at')
-        .eq('status', 'complete')
-        .order('created_at', { ascending: false })
-        .limit(5);
+      const { data } = await supabase.from('upload_jobs').select('id').eq('status', 'complete').order('created_at', { ascending: false }).limit(1);
       jobs = data;
     }
 
-    const jobId = jobs?.[0]?.id ?? null;
-    setSelectedJobId(jobId);
+    const jid = jobs?.[0]?.id ?? null;
+    setJobId(jid);
+    if (!jid) { setLoading(false); return; }
 
-    if (!jobId) {
-      setStats({
-        totalEvents: 0, threatsDetected: 0, criticalAlerts: 0,
-        uniqueIPs: 0, bruteForceIncidents: 0, compromisedAccounts: 0,
-        recentJobs: jobs ?? [],
-      });
-      setLoading(false);
-      return;
-    }
-
-    const [eventsRes, incidentsRes, detectionsRes] = await Promise.all([
-      supabase.from('log_events').select('severity, outcome, source_ip, timestamp', { count: 'exact' }).eq('job_id', jobId).limit(5000),
-      supabase.from('incidents').select('severity, status', { count: 'exact' }).eq('job_id', jobId),
-      supabase.from('detections').select('rule_id, severity', { count: 'exact' }).eq('job_id', jobId),
-    ]);
-
-    const events = eventsRes.data ?? [];
-    const incidents = incidentsRes.data ?? [];
-
-    // Severity breakdown
-    const sevCounts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-    for (const e of events) { sevCounts[e.severity] = (sevCounts[e.severity] ?? 0) + 1; }
-    setSeverityData(
-      Object.entries(sevCounts)
-        .filter(([, v]) => v > 0)
-        .map(([k, v]) => ({ name: k, value: v, color: SEVERITY_COLORS[k] }))
-    );
-
-    // Timeline by hour
-    const hourMap: Record<string, { success: number; failure: number }> = {};
-    for (const e of events) {
-      const h = new Date(e.timestamp).toISOString().slice(11, 13) + ':00';
-      if (!hourMap[h]) hourMap[h] = { success: 0, failure: 0 };
-      if (e.outcome === 'success') hourMap[h].success++;
-      else if (e.outcome === 'failure') hourMap[h].failure++;
-    }
-    setTimelineData(
-      Object.entries(hourMap).sort().map(([h, v]) => ({ hour: h, ...v }))
-    );
-
-    // Top IPs
-    const ipMap: Record<string, { failures: number; successes: number }> = {};
-    for (const e of events) {
-      if (!e.source_ip) continue;
-      if (!ipMap[e.source_ip]) ipMap[e.source_ip] = { failures: 0, successes: 0 };
-      if (e.outcome === 'failure') ipMap[e.source_ip].failures++;
-      else if (e.outcome === 'success') ipMap[e.source_ip].successes++;
-    }
-    setTopIPs(
-      Object.entries(ipMap)
-        .sort((a, b) => b[1].failures - a[1].failures)
-        .slice(0, 10)
-        .map(([ip, v]) => ({ ip, ...v }))
-    );
-
-    const uniqueIPs = new Set(events.map(e => e.source_ip).filter(Boolean)).size;
-    const criticalAlerts = incidents.filter(i => i.severity === 'critical').length;
-
-    setStats({
-      totalEvents: eventsRes.count ?? events.length,
-      threatsDetected: incidentsRes.count ?? incidents.length,
-      criticalAlerts,
-      uniqueIPs,
-      bruteForceIncidents: incidents.length,
-      compromisedAccounts: (detectionsRes.data ?? []).filter(d => d.rule_id === 'success_after_bruteforce').length,
-      recentJobs: jobs ?? [],
-    });
+    const { data } = await supabase.from('incidents').select('*').eq('job_id', jid).order('created_at', { ascending: false });
+    const sorted = (data ?? []).sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.severity] ?? 5));
+    setIncidents(sorted as Incident[]);
     setLoading(false);
   }
 
-  const METRICS = stats ? [
-    { label: 'Total Events', value: stats.totalEvents, icon: Activity, color: '#00D4FF' },
-    { label: 'Threats Detected', value: stats.threatsDetected, icon: AlertTriangle, color: '#FFB800' },
-    { label: 'Critical Alerts', value: stats.criticalAlerts, icon: Flame, color: '#FF3B30' },
-    { label: 'Unique Source IPs', value: stats.uniqueIPs, icon: Globe, color: '#00FF88' },
-    { label: 'Brute Force Incidents', value: stats.bruteForceIncidents, icon: Shield, color: '#FF6B35' },
-    { label: 'Compromised Accounts', value: stats.compromisedAccounts, icon: Users, color: '#FF3B30' },
-  ] : [];
+  async function updateStatus(id: string, status: string) {
+    const supabase = getSupabaseClient();
+    await supabase.from('incidents').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+    setIncidents(prev => prev.map(i => i.id === id ? { ...i, status } : i));
+  }
+
+  const filtered = incidents.filter(i => {
+    if (statusFilter && i.status !== statusFilter) return false;
+    if (severityFilter && i.severity !== severityFilter) return false;
+    return true;
+  });
+
+  // Calculate risk score
+  const riskScore = incidents.length === 0 ? 0 : Math.min(100, Math.round(
+    incidents.reduce((acc, i) => {
+      const weight = { critical: 25, high: 15, medium: 8, low: 3, info: 1 };
+      return acc + (weight[i.severity as keyof typeof weight] ?? 1);
+    }, 0)
+  ));
+
+  const overallStatus = riskScore >= 70 ? 'Critical' : riskScore >= 40 ? 'High Risk' : riskScore >= 20 ? 'Suspicious' : riskScore > 0 ? 'Low Risk' : 'Clean';
+  const statusColor = riskScore >= 70 ? '#FF3B30' : riskScore >= 40 ? '#FF6B35' : riskScore >= 20 ? '#FFB800' : riskScore > 0 ? '#4DC9FF' : '#34C759';
+
+  const allIPs = [...new Set(incidents.flatMap(i => i.source_ips))];
+  const allUsers = [...new Set(incidents.flatMap(i => i.targeted_users))];
+  const mitreTechniques = [...new Set(incidents.map(i => i.mitre_technique_id).filter(Boolean))];
+  const tactics = [...new Set(incidents.map(i => i.mitre_tactic).filter(Boolean))];
+
+  const criticalCount = incidents.filter(i => i.severity === 'critical').length;
+  const highCount = incidents.filter(i => i.severity === 'high').length;
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#E8EDF5', margin: 0 }}>Security Dashboard</h1>
-          <p style={{ color: '#8892A4', fontSize: '0.875rem', marginTop: '0.25rem' }}>Linux Authentication Log Analysis</p>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#E8EDF5', margin: 0 }}>Threat Analysis</h1>
+          <p style={{ color: '#8892A4', fontSize: '0.875rem', marginTop: '0.25rem' }}>{incidents.length} detected incidents</p>
         </div>
-        <Link href="/upload" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 1rem', background: '#00FF88', color: '#0A0E17', fontWeight: 700, borderRadius: '8px', textDecoration: 'none', fontSize: '0.875rem' }}>
-          <Upload size={14} /> Upload Logs
-        </Link>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={() => setActiveTab('incidents')}
+            style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 600, background: activeTab === 'incidents' ? '#00FF88' : 'rgba(255,255,255,0.05)', color: activeTab === 'incidents' ? '#0A0E17' : '#8892A4' }}>
+            Incidents
+          </button>
+          <button onClick={() => setActiveTab('report')}
+            style={{ padding: '0.5rem 1rem', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8125rem', fontWeight: 600, background: activeTab === 'report' ? '#00FF88' : 'rgba(255,255,255,0.05)', color: activeTab === 'report' ? '#0A0E17' : '#8892A4', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+            <FileText size={14} /> Security Report
+          </button>
+        </div>
       </div>
 
-      {!loading && !selectedJobId && (
-        <div className="glass-card" style={{ padding: '3rem', textAlign: 'center' }}>
-          <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
-            <Upload size={28} color="#00FF88" />
-          </div>
-          <h2 style={{ color: '#E8EDF5', fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.5rem' }}>No logs analyzed yet</h2>
-          <p style={{ color: '#8892A4', fontSize: '0.875rem', marginBottom: '1.5rem' }}>Upload a Linux auth.log file to start detecting threats.</p>
-          <Link href="/upload" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1.5rem', background: '#00FF88', color: '#0A0E17', fontWeight: 700, borderRadius: '8px', textDecoration: 'none' }}>
-            <Upload size={16} /> Upload Your First Log File
-          </Link>
-        </div>
-      )}
+      {/* Security Analysis Report Tab */}
+      {activeTab === 'report' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
-      {(loading || selectedJobId) && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-            {loading
-              ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
-              : METRICS.map(m => <MetricCard key={m.label} {...m} />)
-            }
+          {/* Overall Status Banner */}
+          <div className="glass-card" style={{ padding: '1.5rem', borderLeft: `4px solid ${statusColor}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '0.375rem' }}>Overall Security Status</div>
+              <div style={{ fontSize: '2rem', fontWeight: 800, color: statusColor }}>{overallStatus}</div>
+              <div style={{ fontSize: '0.875rem', color: '#8892A4', marginTop: '0.25rem' }}>{incidents.length} threats detected across {allIPs.length} source IPs</div>
+            </div>
+            <RiskGauge score={riskScore} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-            <div className="glass-card" style={{ padding: '1.25rem' }}>
-              <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem' }}>Authentication Timeline</h3>
-              {loading ? <div className="skeleton" style={{ height: 200 }} /> : (
-                <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={timelineData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="hour" stroke="#4A5568" tick={{ fontSize: 11, fill: '#8892A4' }} />
-                    <YAxis stroke="#4A5568" tick={{ fontSize: 11, fill: '#8892A4' }} />
-                    <Tooltip contentStyle={{ background: '#0F1520', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} />
-                    <Area type="monotone" dataKey="failure" stackId="1" stroke="#FF3B30" fill="rgba(255,59,48,0.2)" name="Failures" />
-                    <Area type="monotone" dataKey="success" stackId="1" stroke="#00FF88" fill="rgba(0,255,136,0.2)" name="Successes" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-
-            <div className="glass-card" style={{ padding: '1.25rem' }}>
-              <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem' }}>Severity Distribution</h3>
-              {loading ? <div className="skeleton" style={{ height: 200 }} /> : (
-                <ResponsiveContainer width="100%" height={200}>
-                  <PieChart>
-                    <Pie data={severityData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
-                      {severityData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: '#0F1520', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} />
-                    <Legend formatter={v => <span style={{ color: '#8892A4', fontSize: 12, textTransform: 'capitalize' }}>{v}</span>} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </div>
-
-          {topIPs.length > 0 && (
-            <div className="glass-card" style={{ padding: '1.25rem', marginBottom: '1rem' }}>
-              <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem' }}>Top Attacking IPs</h3>
-              {loading ? <div className="skeleton" style={{ height: 200 }} /> : (
-                <ResponsiveContainer width="100%" height={Math.max(200, topIPs.length * 40)}>
-                  <BarChart data={topIPs} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis type="number" stroke="#4A5568" tick={{ fontSize: 11, fill: '#8892A4' }} />
-                    <YAxis type="category" dataKey="ip" width={140} tick={{ fontSize: 11, fill: '#8892A4', fontFamily: 'JetBrains Mono, monospace' }} />
-                    <Tooltip contentStyle={{ background: '#0F1520', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} />
-                    <Bar dataKey="failures" fill="#FF3B30" name="Failures" radius={[0, 4, 4, 0]} />
-                    <Bar dataKey="successes" fill="#00FF88" name="Successes" radius={[0, 4, 4, 0]} />
-                    <Legend formatter={v => <span style={{ color: '#8892A4', fontSize: 12 }}>{v}</span>} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          )}
-
-          {stats?.recentJobs && stats.recentJobs.length > 0 && (
-            <div className="glass-card" style={{ padding: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: 0 }}>Recent Uploads</h3>
-                <Link href="/upload" style={{ color: '#00FF88', fontSize: '0.8125rem', textDecoration: 'none' }}>Upload new →</Link>
+          {/* Metrics row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
+            {[
+              { label: 'Critical Threats', value: criticalCount, color: '#FF3B30' },
+              { label: 'High Severity', value: highCount, color: '#FF6B35' },
+              { label: 'Source IPs', value: allIPs.length, color: '#00FF88' },
+              { label: 'Affected Users', value: allUsers.length, color: '#00D4FF' },
+              { label: 'MITRE Techniques', value: mitreTechniques.length, color: '#FFB800' },
+              { label: 'Total Incidents', value: incidents.length, color: '#8892A4' },
+            ].map(m => (
+              <div key={m.label} className="glass-card" style={{ padding: '1rem', borderTop: `2px solid ${m.color}` }}>
+                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: m.color, fontFamily: 'JetBrains Mono, monospace' }}>{m.value}</div>
+                <div style={{ fontSize: '0.75rem', color: '#8892A4', marginTop: '0.25rem' }}>{m.label}</div>
               </div>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                    {['File', 'Status', 'Date'].map(h => (
-                      <th key={h} style={{ textAlign: 'left', padding: '0.5rem', fontSize: '0.75rem', fontWeight: 600, color: '#8892A4', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.recentJobs.map(job => (
-                    <tr key={job.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                      <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.875rem', color: '#E8EDF5', fontFamily: 'JetBrains Mono, monospace' }}>{job.filename}</td>
-                      <td style={{ padding: '0.625rem 0.5rem' }}>
-                        <span className={`badge badge-${job.status === 'complete' ? 'low' : job.status === 'failed' ? 'critical' : 'medium'}`}>{job.status}</span>
-                      </td>
-                      <td style={{ padding: '0.625rem 0.5rem', fontSize: '0.8125rem', color: '#8892A4' }}>{new Date(job.created_at).toLocaleDateString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            ))}
+          </div>
+
+          {/* Detected Attacks */}
+          {incidents.length > 0 && (
+            <div className="glass-card" style={{ padding: '1.25rem' }}>
+              <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertTriangle size={16} color="#FF3B30" /> Detected Attacks
+              </h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {incidents.map(inc => (
+                  <div key={inc.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.875rem', background: `${SEVERITY_COLORS[inc.severity]}15`, border: `1px solid ${SEVERITY_COLORS[inc.severity]}40`, borderRadius: '8px' }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: SEVERITY_COLORS[inc.severity], flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.8125rem', color: '#E8EDF5', fontWeight: 600 }}>{inc.title}</span>
+                    <span className={`badge badge-${inc.severity}`}>{inc.severity}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-        </>
-      )}
-    </div>
-  );
-}
+
+          {/* IOCs */}
+          {(allIPs.length > 0 || allUsers.length > 0) && (
+            <div className="glass-card" style={{ padding: '1.25rem' }}>
+              <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Globe size={16} color="#00FF88" /> Indicators of Compromise (IOCs)
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                {allIPs.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Source IPs</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                      {allIPs.slice(0, 10).map(ip => (
+                        <div key={ip} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.375rem 0.625rem', background: 'rgba(255,59,48,0.08)', borderRadius: '6px' }}>
+                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#FF3B30', flexShrink: 0 }} />
+                          <span className="mono" style={{ fontSize: '0.8125rem', color: '#FF3B30' }}>{ip}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {allUsers.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Targeted Users</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                      {allUsers.slice(0, 10).map(u => (
+                        <div key={u} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.375rem 0.625rem', background: 'rgba(0,212,255,0.08)', borderRadius: '6px' }}>
+                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#00D4FF', flexShrink: 0 }} />
+                          <span className="mono" style={{ fontSize: '0.8125rem', color: '#00D4FF' }}>{u}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* MITRE ATT&CK Mapping */}
+          {mitreTechniques.length > 0 && (
+            <div className="glass-card" style={{ padding: '1.25rem' }}>
+              <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Shield size={16} color="#FFB800" /> MITRE ATT&CK Mapping
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {incidents.filter(i => i.mitre_technique_id).map(inc => (
+                  <div key={inc.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem', background: 'rgba(255,184,0,0.06)', borderRadius: '6px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.75rem', fontFamily: 'JetBrains Mono, monospace', color: '#FFB800', background: 'rgba(255,184,0,0.15)', padding: '2px 8px', borderRadius: 4, flexShrink: 0 }}>{inc.mitre_technique_id}</span>
+                    <span style={{ fontSize: '0.8125rem', color: '#E8EDF5', flex: 1 }}>{inc.title}</span>
+                    <span style={{ fontSize: '0.75rem', color: '#8892A4' }}>{inc.mitre_tactic}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Attack Timeline */}
+          {incidents.filter(i => i.first_seen).length > 0 && (
+            <div className="glass-card" style={{ padding: '1.25rem' }}>
+              <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Clock size={16} color="#00D4FF" /> Attack Timeline
+              </h3>
+              <div style={{ position: 'relative', paddingLeft: '1.5rem' }}>
+                <div style={{ position: 'absolute', left: '0.4375rem', top: 0, bottom: 0, width: 2, background: 'rgba(255,255,255,0.06)' }} />
+                {incidents.filter(i => i.first_seen).sort((a, b) => new Date(a.first_seen!).getTime() - new Date(b.first_seen!).getTime()).map(inc => (
+                  <div key={inc.id} style={{ position: 'relative', marginBottom: '1rem' }}>
+                    <div style={{ position: 'absolute', left: '-1.125rem', top: 4, width: 10, height: 10, borderRadius: '50%', background: SEVERITY_COLORS[inc.severity], border: '2px solid #0A0E17' }} />
+                    <div style={{ fontSize: '0.7rem', color: '#4A5568', fontFamily: 'JetBrains Mono, monospace', marginBottom: '0.25rem' }}>
+                      {inc.first_seen ? format(new Date(inc.first_seen), 'MMM dd HH:mm:ss') : '—'}
+                    </div>
+                    <div style={{ fontSize: '0.875rem', color: '#E8EDF5', fontWeight: 600 }}>{inc.title}</div>
+                    {inc.description && <div style={{ fontSize: '0.8125rem', color: '#8892A4', marginTop: '0.25rem' }}>{inc.description}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recommendations */}
+          <div
