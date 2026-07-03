@@ -2,8 +2,6 @@ import { getSupabaseClient } from '@/lib/supabase/client';
 
 export async function getLatestJobId(): Promise<string | null> {
   const supabase = getSupabaseClient();
-  
-  // Get session (more reliable than getUser on Vercel)
   const { data: { session } } = await supabase.auth.getSession();
   const userId = session?.user?.id;
 
@@ -18,13 +16,12 @@ export async function getLatestJobId(): Promise<string | null> {
     if (data && data.length > 0) return data[0].id;
   }
 
-  // Fallback: get any complete job
+  // Fallback: any complete job
   const { data } = await supabase
     .from('upload_jobs')
     .select('id')
     .eq('status', 'complete')
     .order('created_at', { ascending: false })
     .limit(1);
-
   return data?.[0]?.id ?? null;
 }
