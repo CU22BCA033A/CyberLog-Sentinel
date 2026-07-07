@@ -14,7 +14,7 @@ interface DashboardStats {
   threatsDetected: number;
   criticalAlerts: number;
   uniqueIPs: number;
-  bruteForceIncidents: number;
+  totalIncidents: number;
   compromisedAccounts: number;
   recentJobs: Array<{ id: string; filename: string; status: string; created_at: string }>;
 }
@@ -39,6 +39,16 @@ function MetricCard({ label, value, icon: Icon, color }: {
   );
 }
 
+function SkeletonCard() {
+  return (
+    <div className="glass-card" style={{ padding: '1.25rem' }}>
+      <div className="skeleton" style={{ height: 36, width: 36, borderRadius: 8, marginBottom: '0.75rem' }} />
+      <div className="skeleton" style={{ height: 28, width: '60%', marginBottom: '0.375rem' }} />
+      <div className="skeleton" style={{ height: 16, width: '80%' }} />
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,9 +68,9 @@ export default function DashboardPage() {
       const jobId = await getLatestJobId();
       setSelectedJobId(jobId);
 
-      // Get recent jobs for the table
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id;
+
       const { data: recentJobs } = await supabase
         .from('upload_jobs')
         .select('id, filename, status, created_at')
@@ -69,29 +79,39 @@ export default function DashboardPage() {
         .limit(5);
 
       if (!jobId) {
-        setStats({ totalEvents: 0, threatsDetected: 0, criticalAlerts: 0, uniqueIPs: 0, bruteForceIncidents: 0, compromisedAccounts: 0, recentJobs: recentJobs ?? [] });
+        setStats({
+          totalEvents: 0, threatsDetected: 0, criticalAlerts: 0,
+          uniqueIPs: 0, totalIncidents: 0, compromisedAccounts: 0,
+          recentJobs: recentJobs ?? [],
+        });
         setLoading(false);
         return;
       }
 
       const [eventsRes, incidentsRes, detectionsRes] = await Promise.all([
-        supabase.from('log_events').select('severity, outcome, source_ip, timestamp', { count: 'exact' }).eq('job_id', jobId).limit(5000),
-        supabase.from('incidents').select('severity, status', { count: 'exact' }).eq('job_id', jobId),
-        supabase.from('detections').select('rule_id, severity', { count: 'exact' }).eq('job_id', jobId),
+        supabase.from('log_events')
+          .select('severity, outcome, source_ip, timestamp', { count: 'exact' })
+          .eq('job_id', jobId)
+          .limit(5000),
+        supabase.from('incidents')
+          .select('severity, status', { count: 'exact' })
+          .eq('job_id', jobId),
+        supabase.from('detections')
+          .select('rule_id, severity', { count: 'exact' })
+          .eq('job_id', jobId),
       ]);
 
       const events = eventsRes.data ?? [];
       const incidents = incidentsRes.data ?? [];
 
-      // Severity breakdown
       const sevCounts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
       for (const e of events) sevCounts[e.severity] = (sevCounts[e.severity] ?? 0) + 1;
       setSeverityData(
-        Object.entries(sevCounts).filter(([, v]) => v > 0)
+        Object.entries(sevCounts)
+          .filter(([, v]) => v > 0)
           .map(([k, v]) => ({ name: k, value: v, color: SEVERITY_COLORS[k] }))
       );
 
-      // Timeline by hour
       const hourMap: Record<string, { success: number; failure: number }> = {};
       for (const e of events) {
         const h = new Date(e.timestamp).toISOString().slice(11, 13) + ':00';
@@ -101,7 +121,6 @@ export default function DashboardPage() {
       }
       setTimelineData(Object.entries(hourMap).sort().map(([h, v]) => ({ hour: h, ...v })));
 
-      // Top IPs
       const ipMap: Record<string, { failures: number; successes: number }> = {};
       for (const e of events) {
         if (!e.source_ip) continue;
@@ -110,20 +129,23 @@ export default function DashboardPage() {
         else if (e.outcome === 'success') ipMap[e.source_ip].successes++;
       }
       setTopIPs(
-        Object.entries(ipMap).sort((a, b) => b[1].failures - a[1].failures)
-          .slice(0, 10).map(([ip, v]) => ({ ip, ...v }))
+        Object.entries(ipMap)
+          .sort((a, b) => b[1].failures - a[1].failures)
+          .slice(0, 10)
+          .map(([ip, v]) => ({ ip, ...v }))
       );
 
       const uniqueIPs = new Set(events.map(e => e.source_ip).filter(Boolean)).size;
       const criticalAlerts = incidents.filter(i => i.severity === 'critical').length;
+      const compromised = (detectionsRes.data ?? []).filter(d => d.rule_id === 'success_after_bruteforce').length;
 
       setStats({
         totalEvents: eventsRes.count ?? events.length,
         threatsDetected: incidentsRes.count ?? incidents.length,
         criticalAlerts,
         uniqueIPs,
-        bruteForceIncidents: incidents.length,
-        compromisedAccounts: (detectionsRes.data ?? []).filter(d => d.rule_id === 'success_after_bruteforce').length,
+        totalIncidents: incidentsRes.count ?? incidents.length,
+        compromisedAccounts: compromised,
         recentJobs: recentJobs ?? [],
       });
     } catch (err) {
@@ -137,7 +159,7 @@ export default function DashboardPage() {
     { label: 'Threats Detected', value: stats.threatsDetected, icon: AlertTriangle, color: '#FFB800' },
     { label: 'Critical Alerts', value: stats.criticalAlerts, icon: Flame, color: '#FF3B30' },
     { label: 'Unique Source IPs', value: stats.uniqueIPs, icon: Globe, color: '#00FF88' },
-    { label: 'Total Incidents', value: stats.bruteForceIncidents, icon: Shield, color: '#FF6B35' },
+    { label: 'Total Incidents', value: stats.totalIncidents, icon: Shield, color: '#FF6B35' },
     { label: 'Compromised Accounts', value: stats.compromisedAccounts, icon: Users, color: '#FF3B30' },
   ] : [];
 
@@ -146,7 +168,7 @@ export default function DashboardPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#E8EDF5', margin: 0 }}>Security Dashboard</h1>
-          <p style={{ color: '#8892A4', fontSize: '0.875rem', marginTop: '0.25rem' }}>Linux Authentication Log Analysis</p>
+          <p style={{ color: '#8892A4', fontSize: '0.875rem', marginTop: '0.25rem' }}>Real-time log analysis and threat detection</p>
         </div>
         <Link href="/upload" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.625rem 1rem', background: '#00FF88', color: '#0A0E17', fontWeight: 700, borderRadius: '8px', textDecoration: 'none', fontSize: '0.875rem' }}>
           <Upload size={14} /> Upload Logs
@@ -173,22 +195,15 @@ export default function DashboardPage() {
       {(loading || selectedJobId) && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-            {loading
-              ? Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="glass-card" style={{ padding: '1.25rem' }}>
-                    <div className="skeleton" style={{ height: 36, width: 36, borderRadius: 8, marginBottom: '0.75rem' }} />
-                    <div className="skeleton" style={{ height: 28, width: '60%', marginBottom: '0.375rem' }} />
-                    <div className="skeleton" style={{ height: 16, width: '80%' }} />
-                  </div>
-                ))
-              : METRICS.map(m => <MetricCard key={m.label} {...m} />)
-            }
+            {loading ? Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />) : METRICS.map(m => <MetricCard key={m.label} {...m} />)}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
             <div className="glass-card" style={{ padding: '1.25rem' }}>
               <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem' }}>Authentication Timeline</h3>
-              {loading ? <div className="skeleton" style={{ height: 200 }} /> : (
+              {loading ? <div className="skeleton" style={{ height: 200 }} /> : timelineData.length === 0 ? (
+                <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4A5568' }}>No timeline data</div>
+              ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <AreaChart data={timelineData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -201,9 +216,12 @@ export default function DashboardPage() {
                 </ResponsiveContainer>
               )}
             </div>
+
             <div className="glass-card" style={{ padding: '1.25rem' }}>
               <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem' }}>Severity Distribution</h3>
-              {loading ? <div className="skeleton" style={{ height: 200 }} /> : (
+              {loading ? <div className="skeleton" style={{ height: 200 }} /> : severityData.length === 0 ? (
+                <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4A5568' }}>No data</div>
+              ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
                     <Pie data={severityData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
@@ -220,7 +238,7 @@ export default function DashboardPage() {
           {topIPs.length > 0 && (
             <div className="glass-card" style={{ padding: '1.25rem', marginBottom: '1rem' }}>
               <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem' }}>Top Attacking IPs</h3>
-              <ResponsiveContainer width="100%" height={Math.max(200, topIPs.length * 40)}>
+              <ResponsiveContainer width="100%" height={Math.max(200, topIPs.length * 44)}>
                 <BarChart data={topIPs} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                   <XAxis type="number" stroke="#4A5568" tick={{ fontSize: 11, fill: '#8892A4' }} />
@@ -252,7 +270,9 @@ export default function DashboardPage() {
                   {stats.recentJobs.map(job => (
                     <tr key={job.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                       <td style={{ padding: '0.625rem 0.5rem', color: '#E8EDF5', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.875rem' }}>{job.filename}</td>
-                      <td style={{ padding: '0.625rem 0.5rem' }}><span className={`badge badge-${job.status === 'complete' ? 'low' : 'critical'}`}>{job.status}</span></td>
+                      <td style={{ padding: '0.625rem 0.5rem' }}>
+                        <span className={`badge badge-${job.status === 'complete' ? 'low' : 'critical'}`}>{job.status}</span>
+                      </td>
                       <td style={{ padding: '0.625rem 0.5rem', color: '#8892A4', fontSize: '0.8125rem' }}>{new Date(job.created_at).toLocaleDateString()}</td>
                     </tr>
                   ))}
