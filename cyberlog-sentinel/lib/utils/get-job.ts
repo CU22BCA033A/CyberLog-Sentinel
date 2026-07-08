@@ -16,6 +16,7 @@ export async function getLatestJobId(): Promise<string | null> {
     if (data && data.length > 0) return data[0].id;
   }
 
+  // Fallback: get any complete job
   const { data } = await supabase
     .from('upload_jobs')
     .select('id')
