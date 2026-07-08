@@ -30,7 +30,7 @@ function RiskGauge({ score }: { score: number }) {
       </svg>
       <div style={{ position: 'absolute', textAlign: 'center' }}>
         <div style={{ fontSize: '1.5rem', fontWeight: 800, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>{score}</div>
-        <div style={{ fontSize: '0.6rem', color: '#4A5568', textTransform: 'uppercase' }}>/ 100</div>
+        <div style={{ fontSize: '0.6rem', color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.05em' }}>/ 100</div>
       </div>
     </div>
   );
@@ -84,10 +84,13 @@ export default function ThreatsPage() {
     return true;
   });
 
-  const riskScore = Math.min(100, incidents.reduce((acc, i) =>
-    acc + ({ critical: 20, high: 12, medium: 6, low: 2, info: 0 }[i.severity] ?? 0), 0));
+  const riskScore = Math.min(100, incidents.reduce((acc, i) => {
+    return acc + ({ critical: 20, high: 12, medium: 6, low: 2, info: 0 }[i.severity] ?? 0);
+  }, 0));
+
   const overallStatus = riskScore >= 75 ? 'CRITICAL THREAT' : riskScore >= 50 ? 'HIGH RISK' : riskScore >= 25 ? 'SUSPICIOUS' : riskScore > 0 ? 'LOW RISK' : 'NO THREAT DETECTED';
   const statusColor = riskScore >= 75 ? '#FF3B30' : riskScore >= 50 ? '#FF6B35' : riskScore >= 25 ? '#FFB800' : riskScore > 0 ? '#4DC9FF' : '#34C759';
+
   const criticalCount = incidents.filter(i => i.severity === 'critical').length;
   const highCount = incidents.filter(i => i.severity === 'high').length;
   const allIPs = [...new Set(incidents.flatMap(i => i.source_ips))];
@@ -98,14 +101,14 @@ export default function ThreatsPage() {
     { cond: criticalCount > 0, priority: 'IMMEDIATE', color: '#FF3B30', text: 'Isolate affected systems NOW. Block all flagged IPs at the firewall. Rotate credentials for all compromised accounts immediately.' },
     { cond: incidents.some(i => i.mitre_technique_id?.startsWith('T1110')), priority: 'CRITICAL', color: '#FF3B30', text: 'Implement account lockout after 5 failed attempts. Deploy fail2ban. Enable MFA on all SSH and web authentication endpoints.' },
     { cond: incidents.some(i => i.mitre_technique_id === 'T1078.003'), priority: 'HIGH', color: '#FF6B35', text: 'Disable direct root SSH login (PermitRootLogin no). Require sudo with full audit logging for all privileged operations.' },
-    { cond: incidents.some(i => i.mitre_technique_id === 'T1190'), priority: 'HIGH', color: '#FF6B35', text: 'SQL Injection detected. Switch to parameterized queries immediately. Deploy WAF rules. Audit all database-facing endpoints.' },
-    { cond: incidents.some(i => i.mitre_technique_id === 'T1059'), priority: 'CRITICAL', color: '#FF3B30', text: 'Command injection detected. Audit all user-controlled inputs that reach system commands. Apply strict input validation.' },
-    { cond: incidents.some(i => i.mitre_technique_id === 'T1059.007'), priority: 'HIGH', color: '#FF6B35', text: 'XSS detected. Implement Content Security Policy (CSP) headers. Sanitize all user-supplied HTML/JS output.' },
+    { cond: incidents.some(i => i.mitre_technique_id === 'T1190'), priority: 'HIGH', color: '#FF6B35', text: 'SQL Injection detected. Immediately switch to parameterized queries. Deploy WAF rules. Audit all database-facing endpoints.' },
+    { cond: incidents.some(i => i.mitre_technique_id === 'T1059'), priority: 'CRITICAL', color: '#FF3B30', text: 'Command injection detected. Audit all user-controlled inputs that reach system commands. Apply strict input validation and sandboxing.' },
+    { cond: incidents.some(i => i.mitre_technique_id === 'T1059.007'), priority: 'HIGH', color: '#FF6B35', text: 'XSS detected. Implement Content Security Policy (CSP) headers. Sanitize all user-supplied HTML/JS output. Use HttpOnly cookies.' },
     { cond: incidents.some(i => i.mitre_technique_id === 'T1083'), priority: 'HIGH', color: '#FF6B35', text: 'Directory traversal detected. Validate all file path inputs. Use chroot jails. Restrict access to sensitive system paths.' },
-    { cond: incidents.some(i => i.mitre_technique_id === 'T1046'), priority: 'MEDIUM', color: '#FFB800', text: 'Port scanning detected. Review firewall rules. Close all unnecessary ports. Deploy IDS/IPS to detect scan patterns.' },
-    { cond: incidents.some(i => i.mitre_technique_id === 'T1486'), priority: 'CRITICAL', color: '#FF3B30', text: 'Ransomware detected. Disconnect affected systems immediately. Restore from clean backups. Do not pay ransom.' },
-    { cond: incidents.some(i => i.mitre_technique_id === 'T1041'), priority: 'CRITICAL', color: '#FF3B30', text: 'Data exfiltration detected. Block egress to flagged IPs. Audit data access logs. Consider breach disclosure obligations.' },
-    { cond: true, priority: 'ONGOING', color: '#8892A4', text: 'Enable centralised log aggregation (SIEM). Configure real-time alerts. Conduct quarterly penetration testing.' },
+    { cond: incidents.some(i => i.mitre_technique_id === 'T1046'), priority: 'MEDIUM', color: '#FFB800', text: 'Port scanning detected. Review and tighten firewall rules. Close all unnecessary ports. Deploy IDS/IPS to detect scan patterns.' },
+    { cond: incidents.some(i => i.mitre_technique_id === 'T1486'), priority: 'CRITICAL', color: '#FF3B30', text: 'Ransomware activity detected. Disconnect affected systems immediately. Restore from verified clean backups. Do not pay ransom.' },
+    { cond: incidents.some(i => i.mitre_technique_id === 'T1041'), priority: 'CRITICAL', color: '#FF3B30', text: 'Data exfiltration detected. Block egress to flagged IPs immediately. Audit data access logs. Notify DPO and consider breach disclosure obligations.' },
+    { cond: true, priority: 'ONGOING', color: '#8892A4', text: 'Enable centralised log aggregation (SIEM). Configure real-time alerts. Conduct quarterly penetration testing. Patch all systems within 48 hours of CVE publication.' },
   ];
 
   if (loading) return (
@@ -143,24 +146,30 @@ export default function ThreatsPage() {
         </div>
       )}
 
+      {/* ===== SECURITY ANALYSIS REPORT ===== */}
       {activeTab === 'report' && jobId && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+          {/* Status Banner */}
           <div className="glass-card" style={{ padding: '1.5rem', borderLeft: `4px solid ${statusColor}` }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '0.7rem', color: '#4A5568', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '0.5rem' }}>Security Analysis Report</div>
-                <div style={{ fontSize: '2rem', fontWeight: 800, color: statusColor }}>{overallStatus}</div>
+                <div style={{ fontSize: '2rem', fontWeight: 800, color: statusColor, letterSpacing: '-0.02em' }}>{overallStatus}</div>
                 <div style={{ fontSize: '0.875rem', color: '#8892A4', marginTop: '0.375rem' }}>
-                  {incidents.length === 0 ? 'No malicious activity detected in this log file.' : `${incidents.length} threat${incidents.length !== 1 ? 's' : ''} detected — ${criticalCount} critical, ${highCount} high severity`}
+                  {incidents.length === 0
+                    ? 'No malicious activity detected in this log file.'
+                    : `${incidents.length} threat${incidents.length !== 1 ? 's' : ''} detected — ${criticalCount} critical, ${highCount} high severity`}
                 </div>
               </div>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '0.7rem', color: '#4A5568', fontWeight: 600, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Risk Score</div>
+                <div style={{ fontSize: '0.7rem', color: '#4A5568', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Risk Score</div>
                 <RiskGauge score={riskScore} />
               </div>
             </div>
           </div>
 
+          {/* Metric Cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '0.75rem' }}>
             {[
               { label: 'Critical', value: criticalCount, color: '#FF3B30' },
@@ -179,6 +188,7 @@ export default function ThreatsPage() {
 
           {incidents.length > 0 && (
             <>
+              {/* Detected Attacks */}
               <div className="glass-card" style={{ padding: '1.25rem' }}>
                 <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <AlertTriangle size={16} color="#FF3B30" /> Detected Attacks
@@ -194,6 +204,7 @@ export default function ThreatsPage() {
                 </div>
               </div>
 
+              {/* IOCs */}
               {(allIPs.length > 0 || allUsers.length > 0) && (
                 <div className="glass-card" style={{ padding: '1.25rem' }}>
                   <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -230,6 +241,7 @@ export default function ThreatsPage() {
                 </div>
               )}
 
+              {/* Attack Timeline */}
               <div className="glass-card" style={{ padding: '1.25rem' }}>
                 <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <Clock size={16} color="#00D4FF" /> Attack Timeline
@@ -254,6 +266,7 @@ export default function ThreatsPage() {
                 </div>
               </div>
 
+              {/* MITRE ATT&CK */}
               {mitreTechniques.length > 0 && (
                 <div className="glass-card" style={{ padding: '1.25rem' }}>
                   <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -262,7 +275,7 @@ export default function ThreatsPage() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
                     <thead>
                       <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                        {['Technique ID', 'Detection', 'Tactic', 'Severity'].map(h => (
+                        {['Technique ID', 'Name', 'Tactic', 'Severity'].map(h => (
                           <th key={h} style={{ textAlign: 'left', padding: '0.5rem', fontSize: '0.7rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                         ))}
                       </tr>
@@ -283,6 +296,7 @@ export default function ThreatsPage() {
                 </div>
               )}
 
+              {/* Business Impact */}
               <div className="glass-card" style={{ padding: '1.25rem' }}>
                 <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <TrendingUp size={16} color="#FF6B35" /> Business Impact Assessment
@@ -290,12 +304,13 @@ export default function ThreatsPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {criticalCount > 0 && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,59,48,0.08)', borderRadius: '8px', borderLeft: '3px solid #FF3B30', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FF3B30' }}>Critical:</strong> Active system compromise detected. Data exfiltration, service disruption, and lateral movement are immediate risks.</p>}
                   {highCount > 0 && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,107,53,0.08)', borderRadius: '8px', borderLeft: '3px solid #FF6B35', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FF6B35' }}>High:</strong> Significant attack activity detected. Authentication systems under stress. Credential theft and unauthorized access are likely if not contained.</p>}
-                  {incidents.some(i => i.mitre_technique_id === 'T1190') && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,184,0,0.08)', borderRadius: '8px', borderLeft: '3px solid #FFB800', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FFB800' }}>Data Risk:</strong> SQL injection attempts may expose database records, PII, and authentication credentials.</p>}
-                  {incidents.some(i => i.mitre_technique_id === 'T1486') && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,59,48,0.08)', borderRadius: '8px', borderLeft: '3px solid #FF3B30', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FF3B30' }}>Ransomware:</strong> File encryption detected. Business continuity is at immediate risk.</p>}
-                  {incidents.some(i => i.mitre_technique_id === 'T1041') && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,59,48,0.08)', borderRadius: '8px', borderLeft: '3px solid #FF3B30', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FF3B30' }}>Exfiltration:</strong> Large-scale data transfer to external IP detected. Breach notification may be legally required.</p>}
+                  {incidents.some(i => i.mitre_technique_id === 'T1190') && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,184,0,0.08)', borderRadius: '8px', borderLeft: '3px solid #FFB800', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FFB800' }}>Data Risk:</strong> SQL injection attempts may expose sensitive database records, PII, financial data, or authentication credentials.</p>}
+                  {incidents.some(i => i.mitre_technique_id === 'T1486') && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,59,48,0.08)', borderRadius: '8px', borderLeft: '3px solid #FF3B30', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FF3B30' }}>Ransomware:</strong> File encryption ransomware detected. Business continuity is at immediate risk. All operations may be disrupted.</p>}
+                  {incidents.some(i => i.mitre_technique_id === 'T1041') && <p style={{ margin: 0, padding: '0.75rem', background: 'rgba(255,59,48,0.08)', borderRadius: '8px', borderLeft: '3px solid #FF3B30', fontSize: '0.875rem', color: '#E8EDF5', lineHeight: 1.6 }}><strong style={{ color: '#FF3B30' }}>Exfiltration:</strong> Large-scale data transfer to external IP detected. Sensitive data may have already left the network. Breach notification may be legally required.</p>}
                 </div>
               </div>
 
+              {/* Confidence + False Positive */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div className="glass-card" style={{ padding: '1.25rem' }}>
                   <h3 style={{ fontSize: '0.875rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem' }}>Detection Confidence</h3>
@@ -331,6 +346,7 @@ export default function ThreatsPage() {
             </>
           )}
 
+          {/* Recommendations */}
           <div className="glass-card" style={{ padding: '1.25rem' }}>
             <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E8EDF5', margin: '0 0 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <TrendingUp size={16} color="#00FF88" /> Recommendations
@@ -347,6 +363,7 @@ export default function ThreatsPage() {
         </div>
       )}
 
+      {/* ===== INCIDENTS LIST ===== */}
       {activeTab === 'incidents' && jobId && (
         <>
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -364,7 +381,7 @@ export default function ThreatsPage() {
           </div>
 
           {filtered.length === 0 ? (
-            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#8892A4' }}>No incidents match your filters.</div>
+            <div className="glass-card" style={{ padding: '3rem', textAlign: 'center', color: '#8892A4' }}>No incidents match your current filters.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {filtered.map(inc => (
@@ -375,3 +392,43 @@ export default function ThreatsPage() {
                         <span style={{ fontSize: '0.7rem', fontFamily: 'JetBrains Mono, monospace', color: '#4A5568' }}>{inc.incident_ref}</span>
                         <span className={`badge badge-${inc.severity}`}>{inc.severity}</span>
                         {inc.mitre_technique_id && <span style={{ fontSize: '0.7rem', fontFamily: 'JetBrains Mono, monospace', color: '#FFB800', background: 'rgba(255,184,0,0.1)', padding: '2px 6px', borderRadius: 4 }}>{inc.mitre_technique_id}</span>}
+                        {inc.mitre_tactic && <span style={{ fontSize: '0.7rem', color: '#8892A4', background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: 4 }}>{inc.mitre_tactic}</span>}
+                      </div>
+                      <Link href={`/dashboard/threats/${inc.id}`} style={{ textDecoration: 'none' }}>
+                        <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E8EDF5', margin: 0 }}>{inc.title}</h3>
+                      </Link>
+                      {inc.description && <p style={{ fontSize: '0.8125rem', color: '#8892A4', margin: '0.375rem 0 0', lineHeight: 1.5 }}>{inc.description}</p>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
+                      <select value={inc.status} onChange={e => updateStatus(inc.id, e.target.value)}
+                        style={{ padding: '0.375rem 0.625rem', background: `${STATUS_COLOR[inc.status]}15`, border: `1px solid ${STATUS_COLOR[inc.status]}40`, borderRadius: '6px', color: STATUS_COLOR[inc.status], fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>
+                        {['open','investigating','closed','false_positive'].map(s => <option key={s} value={s} style={{ background: '#0F1520', color: '#E8EDF5' }}>{s.replace('_',' ')}</option>)}
+                      </select>
+                      <button onClick={() => setExpandedId(expandedId === inc.id ? null : inc.id)}
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px', color: '#8892A4', cursor: 'pointer', width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {expandedId === inc.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ padding: '0 1.25rem 1rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap', fontSize: '0.8125rem', color: '#8892A4' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}><AlertTriangle size={13} /> {inc.event_count} events</span>
+                    {inc.source_ips.length > 0 && <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}><Globe size={13} /><span className="mono" style={{ color: '#00FF88' }}>{inc.source_ips.slice(0,2).join(', ')}{inc.source_ips.length > 2 ? ` +${inc.source_ips.length-2}` : ''}</span></span>}
+                    {inc.targeted_users.length > 0 && <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}><Users size={13} /><span className="mono" style={{ color: '#00D4FF' }}>{inc.targeted_users.slice(0,2).join(', ')}{inc.targeted_users.length > 2 ? ` +${inc.targeted_users.length-2}` : ''}</span></span>}
+                    {inc.first_seen && <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}><Clock size={13} />{format(new Date(inc.first_seen), 'MMM dd HH:mm')}{inc.last_seen ? ` → ${format(new Date(inc.last_seen), 'HH:mm')}` : ''}</span>}
+                  </div>
+                  {expandedId === inc.id && (
+                    <div style={{ padding: '1rem 1.25rem', borderTop: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.2)' }}>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Detection Logic</div>
+                      <p style={{ fontSize: '0.875rem', color: '#8892A4', margin: '0 0 0.75rem', lineHeight: 1.6 }}>{inc.description}</p>
+                      <Link href={`/dashboard/threats/${inc.id}`} style={{ fontSize: '0.8125rem', color: '#00FF88', textDecoration: 'none' }}>View Full Evidence →</Link>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
