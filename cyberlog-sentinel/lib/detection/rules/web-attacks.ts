@@ -42,9 +42,9 @@ export function detectTaggedAttacks(events: LogEvent[]): DetectionResult[] {
     if (groups[typeKey]) groups[typeKey].events.push(evt);
   }
 
-  // Merge traversal + directory_traversal
-  const combined = [...groups['traversal'].events, ...groups['directory_traversal'].events];
-  groups['directory_traversal'].events = [...new Map(combined.map(e => [e.id, e])).values()];
+  // Merge traversal aliases to avoid duplicates
+  const traversalCombined = [...groups['traversal'].events, ...groups['directory_traversal'].events];
+  groups['directory_traversal'].events = [...new Map(traversalCombined.map(e => [e.id, e])).values()];
   groups['traversal'].events = [];
 
   for (const [, group] of Object.entries(groups)) {
