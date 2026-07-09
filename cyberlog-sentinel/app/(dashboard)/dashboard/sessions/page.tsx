@@ -112,40 +112,80 @@ export default function SessionsPage() {
                   const suspicious = s.sudo_commands && s.sudo_commands.length > 0;
                   const isActive = s.status === 'active';
                   return (
-                    <>
-                      <tr
-                        key={s.id}
-                        onClick={() => suspicious && setExpandedId(expandedId === s.id ? null : s.id)}
-                        style={{
-                          borderBottom: '1px solid rgba(255,255,255,0.04)',
-                          background: isActive ? 'rgba(255,184,0,0.04)' : suspicious ? 'rgba(255,107,53,0.04)' : 'transparent',
-                          cursor: suspicious ? 'pointer' : 'default',
-                        }}
-                      >
-                        <td style={{ padding: '0.75rem 1rem', fontFamily: 'JetBrains Mono, monospace', color: '#00D4FF' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                            <User size={12} />{s.username ?? '—'}
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', fontFamily: 'JetBrains Mono, monospace', color: '#00FF88' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                            <Globe size={12} />{s.source_ip ?? '—'}
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', color: '#8892A4', whiteSpace: 'nowrap' }}>
-                          {s.login_time ? format(new Date(s.login_time), 'MMM dd HH:mm:ss') : '—'}
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', color: '#8892A4', whiteSpace: 'nowrap' }}>
-                          {s.logout_time ? format(new Date(s.logout_time), 'MMM dd HH:mm:ss') : (
-                            <span style={{ color: '#FFB800', fontSize: '0.75rem' }}>Still active</span>
-                          )}
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem', color: '#E8EDF5', fontFamily: 'JetBrains Mono, monospace' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                            <Clock size={12} color="#4A5568" />{formatDuration(s.duration_seconds)}
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.75rem 1rem' }}>
-                          {suspicious ? (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', color: '#FF6B35', background: 'rgba(255,107,53,0.1)', padding: '2px 8px', borderRadius: 4 }}>
-                              <AlertTriangle size={11} /> {s.sudo_commands.length} command{s.sudo_commands.length !== 1 ? 's' : ''}
+                    <tr
+                      key={s.id}
+                      onClick={() => suspicious && setExpandedId(expandedId === s.id ? null : s.id)}
+                      style={{
+                        borderBottom: '1px solid rgba(255,255,255,0.04)',
+                        background: isActive ? 'rgba(255,184,0,0.04)' : suspicious ? 'rgba(255,107,53,0.04)' : 'transparent',
+                        cursor: suspicious ? 'pointer' : 'default',
+                      }}
+                    >
+                      <td style={{ padding: '0.75rem 1rem', fontFamily: 'JetBrains Mono, monospace', color: '#00D4FF' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                          <User size={12} />{s.username ?? '—'}
+                        </div>
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', fontFamily: 'JetBrains Mono, monospace', color: '#00FF88' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                          <Globe size={12} />{s.source_ip ?? '—'}
+                        </div>
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', color: '#8892A4', whiteSpace: 'nowrap' }}>
+                        {s.login_time ? format(new Date(s.login_time), 'MMM dd HH:mm:ss') : '—'}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', color: '#8892A4', whiteSpace: 'nowrap' }}>
+                        {s.logout_time ? format(new Date(s.logout_time), 'MMM dd HH:mm:ss') : (
+                          <span style={{ color: '#FFB800', fontSize: '0.75rem' }}>Still active</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem', color: '#E8EDF5', fontFamily: 'JetBrains Mono, monospace' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                          <Clock size={12} color="#4A5568" />{formatDuration(s.duration_seconds)}
+                        </div>
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        {suspicious ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', color: '#FF6B35', background: 'rgba(255,107,53,0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                            <AlertTriangle size={11} />
+                            {s.sudo_commands.length} command{s.sudo_commands.length !== 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#34C759', fontSize: '0.75rem' }}>None</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.75rem 1rem' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', fontWeight: 600, color: isActive ? '#FFB800' : '#34C759' }}>
+                          <Terminal size={12} />{isActive ? 'Active' : 'Closed'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {expandedId && (
+        <div style={{ marginTop: '1rem' }} className="glass-card">
+          {sessions.filter(s => s.id === expandedId && s.sudo_commands?.length > 0).map(s => (
+            <div key={s.id} style={{ padding: '1rem 1.5rem' }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#4A5568', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+                Sudo Commands — {s.username} @ {s.login_time ? format(new Date(s.login_time), 'MMM dd HH:mm') : ''}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                {s.sudo_commands.map((cmd, i) => (
+                  <code key={i} style={{ display: 'block', padding: '0.5rem 0.75rem', background: 'rgba(0,0,0,0.4)', borderRadius: '6px', fontSize: '0.75rem', color: '#FF6B35', fontFamily: 'JetBrains Mono, monospace', wordBreak: 'break-all' }}>
+                    {cmd}
+                  </code>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
